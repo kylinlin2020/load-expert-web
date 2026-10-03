@@ -12,6 +12,9 @@
           </div>
         </div>
         <div class="ver-right">
+          <el-tag :type="isStaticBuild ? 'warning' : 'success'" effect="dark" size="small">
+            {{ isStaticBuild ? '纯静态版（数据在本浏览器）' : '服务端版（数据在后端）' }}
+          </el-tag>
           <el-tag v-if="appVersion.commitShort" type="info" effect="plain" size="small">
             提交 {{ appVersion.commitShort }}
           </el-tag>
@@ -40,6 +43,20 @@
         :closable="false"
         title="未初始化 git，版本号不会自增"
         description="当前版本直接取自 package.json。在项目目录执行 git init 并提交后，每次提交版本号自动 +1。"
+      />
+      <!--
+        静态版最需要说清的一件事：数据只在**这一个浏览器**里。
+        不写清楚的话，用户会以为和在服务器版里看到的是同一份数据，
+        或以为数据"在云上"。误清一次浏览器数据 = 全部货物/柜型/方案永久丢失。
+      -->
+      <el-alert
+        v-if="isStaticBuild"
+        class="mt12"
+        type="error"
+        show-icon
+        :closable="false"
+        title="数据保存在本浏览器的 IndexedDB 中，没有服务器副本"
+        description="换浏览器、换电脑、换域名都看不到这份数据。清除浏览器数据 / 站点数据 / 用无痕窗口，都会让录入的货物、柜型、方案**全部丢失且无法恢复**。请只在一个固定浏览器里使用。"
       />
 
       <div class="tbl-scroll">
@@ -190,7 +207,39 @@
         description="点「打印 / 另存为 PDF」后会打开浏览器打印对话框，请在其中选择「另存为 PDF」这一项。这样得到的 PDF 是真矢量文字（中文可选中、可搜索），表格跨页自动重复表头、行不会被截断。"
       />
 
-      <h3 class="sec">六、已知限制（据实说明）</h3>
+      <h3 class="sec">六、数据存在哪里</h3>
+      <p>
+        本项目有两套构建产物，<strong>页面右上角会显示当前是哪一套</strong>。
+        两套界面完全相同，区别只在数据放哪儿、算法在哪儿跑。
+      </p>
+      <div class="tbl-scroll">
+        <table class="grid">
+          <thead>
+            <tr><th style="width: 120px">版本</th><th style="width: 130px">构建命令</th><th>数据</th><th style="width: 110px">算法在哪跑</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>服务端版</strong></td>
+              <td><code>npm run build:web</code></td>
+              <td>后端 SQLite：<code>data/load-expert.db</code></td>
+              <td>Node 服务端</td>
+            </tr>
+            <tr>
+              <td><strong>纯静态版</strong></td>
+              <td><code>npm run build:web:static</code></td>
+              <td>本浏览器 IndexedDB（<code>load-expert</code> 库，boxes / containers / plans 三张表）</td>
+              <td><strong>浏览器内</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tip">
+        两套版本跑的是<strong>同一份算法代码</strong>（<code>src/algorithm</code> 零 Node 依赖，直接编进浏览器包），
+        装载率不会因为换了版本而变。<strong>但两边的数据互相独立、不会同步</strong> ——
+        静态版里录入的货物不会出现在服务端版，反之亦然。
+      </p>
+
+      <h3 class="sec">七、已知限制（据实说明）</h3>
       <div class="limits">
         <p><strong>以下几项是从原程序逆向还原时未能取到的部分，现按通行做法自拟，语义不保证与原软件一致：</strong></p>
         <ul class="manual">
@@ -227,8 +276,16 @@
  * 且不需要额外的 tag 约定。详见该脚本的注释。
  *
  * 策略名称/特征说明直接 import 算法侧的常量，避免文档与实现漂移。
+ *
+ * ## 为什么要显式显示"当前是哪一套版本"
+ *
+ * 纯静态版把数据存在浏览器的 IndexedDB 里。两套版本界面一模一样，
+ * 不标出来的话很容易误以为两边是同一份数据 —— 而实际上它们完全独立。
+ * 更严重的是"以为数据在服务器上有备份"，于是随手清一次浏览器数据就全没了。
+ * 这个代价是不可逆的，所以必须在界面上讲明白，而不是只写在文档里。
  */
 import { STRATEGY_NAMES, STRATEGY_HINTS } from '../../algorithm/candidate-blocks';
+import { IS_STATIC_BUILD as isStaticBuild } from '../api/client';
 import { appVersion } from '../../version';
 
 const sourceText = appVersion.source === 'git' ? 'git 提交数自动推算' : 'package.json（未初始化 git）';

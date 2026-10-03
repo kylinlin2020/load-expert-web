@@ -20,9 +20,12 @@
   "include": [
     "src/algorithm/**/*.ts",
     "src/db/**/*.ts",
+    "src/model/**/*.ts",
     "src/server/**/*.ts",
     "src/types/**/*.ts",
     "src/web/lib/**/*.ts",
+    "src/web/api/**/*.ts",
+    "src/web/env.d.ts",
     "test/**/*.ts",
     "scripts/**/*.ts"
   ]

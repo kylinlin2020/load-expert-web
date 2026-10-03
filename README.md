@@ -21,25 +21,91 @@ AIGC:
 | 后端 | Fastify + node:sqlite（Node 内置 SQLite，无需原生编译） |
 | 算法引擎 | 自研三维装柜算法（src/algorithm），对齐原软件逆向分析结果 |
 
+## 两套构建产物
+
+界面完全相同，**区别只在数据放哪儿、算法在哪儿跑**。页面「应用版本」页右上角会显式标注当前是哪一套。
+
+| | 服务端版 | 纯静态版 |
+|---|---|---|
+| 构建命令 | `npm run build:web` | `npm run build:web:static` |
+| 数据 | 后端 SQLite `data/load-expert.db` | 浏览器 IndexedDB（库名 `load-expert`） |
+| 算法在哪跑 | Node 服务端 | **浏览器内** |
+| 路由 | history（URL 干净） | hash（`/#/calculate`） |
+| 运行要求 | 需要 `npm run server` | **纯静态文件，扔哪都能跑** |
+| 托管成本 | 需一台服务器 | **零**（GitHub Pages / 对象存储 / 任何能发文件的地方） |
+
+**两套跑的是同一份算法代码**（`src/algorithm` 零 Node 依赖，直接编进浏览器包），
+装载率不会因为换了版本而变。**但两边的数据互相独立、不会同步** ——
+静态版录入的货物不会出现在服务端版，反之亦然。
+
+> ⚠️ **静态版的数据只存在于用户自己的浏览器里，没有服务器副本。**
+> 换浏览器、换电脑、换域名都看不到；清除浏览器数据 / 站点数据 / 用无痕窗口，
+> 录入的货物、柜型、方案**全部丢失且无法恢复**。只应在一个固定浏览器里使用。
+
+### 部署纯静态版到 GitHub Pages
+
+```bash
+npm run build:web:static
+```
+
+产物在 `dist/web/`（含 `.nojekyll`），把它推到仓库的 `gh-pages` 分支或 `/docs` 目录即可。
+
+之所以能做到「同一份产物扔哪都能跑」，靠两点：
+
+- **hash 路由**（`createWebHashHistory`）：GitHub Pages 与绝大多数对象存储
+  **不做 SPA 的 history fallback**，请求 `/仓库名/装柜计算` 会直接 404。
+  路由放进 `#` 之后，服务器只需回一个 `index.html`。
+- **相对资源路径**（`base: './'`）：index.html 里所有资源引用都相对于当前 HTML 所在目录，
+  所以项目站 `/仓库名/`、用户站 `/用户名/`、任意子目录都不用重新构建。
+
+> 直接双击本地 `index.html`（`file://`）**不行** —— 浏览器禁止 `file://` 使用 IndexedDB。
+> 要在本地试，用 `npm run preview:static` 起个本地服务器。
+
+### 构建产物自检
+
+`build:web:static` 末尾会自动跑 `scripts/check-static-bundle.mjs`，检查三件事：
+
+1. 产物里**没有** Node / 服务端代码（`node:sqlite`、`fastify`、`DatabaseSync`…）
+2. 产物里**有**算法引擎指纹 —— 防 Vite 把静态分支误判成死代码、连算法一起摇掉。
+   那种故障页面照样打得开、柜型列表照样有数据（种子照写），只在点「开始计算」时才炸
+3. 资源引用是相对路径，且 `indexedDB` 在包里
+
+> 标记本身也可能过期，所以每项都会**回查源码**：标记若已从算法里消失，
+> 报「标记过期」而不是误报「算法被摇掉」。两类问题必须分清，否则这个检查很快会被忽略。
+> 重新挑标记用 `node scripts/find-algo-markers.mjs`。
+
 ## 目录结构
 
 ```
 load-expert-web/
 ├── src/
 │   ├── algorithm/       # 装柜算法引擎（候选块、空间分割、堆码/承托约束、LP 配比）
+│   │                    # ⚠️ 必须保持零 Node 依赖 —— 静态版直接在浏览器里跑它
 │   ├── types/           # 核心领域类型（Box / Container / PackResult）
+│   ├── model/           # 行↔领域对象映射 + 种子数据（**两种存储共用**）
 │   ├── db/              # SQLite 数据层（boxes / containers / plans）
 │   ├── server/          # Fastify REST API
 │   └── web/             # 前端（Vue3）
 │       ├── main.ts      # 入口
-│       ├── router/      # 路由
+│       ├── router/      # 路由（history / hash 按构建版本切换）
 │       ├── App.vue      # 布局（侧边导航 + 内容区）
-│       ├── api/         # fetch 客户端（baseURL 可配）
-│       ├── views/       # 货物管理 / 柜型管理 / 装柜计算 / 方案列表
+│       ├── api/         # 数据层：client 切换 + http/local 两套实现 + IndexedDB 适配器
+│       │   ├── client.ts      # 入口，按构建模式二选一（视图只认它）
+│       │   ├── httpClient.ts  # 服务端版：fetch → Fastify
+│       │   ├── localClient.ts # 静态版：IndexedDB + 浏览器内跑算法
+│       │   ├── localStore.ts  # 静态版 CRUD + 种子（与 db.ts 语义逐条对齐）
+│       │   ├── idbAdapter.ts  # 真实 IndexedDB
+│       │   └── buildEnv.ts    # 构建期环境读取（对 Node 友好，可被单测 import）
+│       ├── lib/         # 可单测的纯逻辑（packRows / containerGroups）
+│       ├── views/       # 货物管理 / 柜型管理 / 装柜计算 / 报表 / 方案列表 / 应用版本
 │       └── components/  # Packing3D.vue（Three.js 3D 可视化）
-├── vite.config.ts       # 前端构建配置
+├── test/
+│   ├── helpers/memAdapter.ts  # RowStore 的内存实现（供静态版数据层在 Node 里测）
+│   ├── static-boundary.test.ts# 架构边界：src/web 不许碰 Node，算法层不许出 src/
+│   └── local-store.test.ts    # 静态版数据层 + 浏览器侧算法
+├── vite.config.ts       # 前端构建配置（base / outDir 按 mode 切换）
 ├── index.html           # 前端入口页
-└── data/                # SQLite 数据库文件（首次启动自动生成）
+└── data/                # SQLite 数据库文件（首次启动自动生成；静态版不需要）
 ```
 
 ## 环境要求
@@ -80,9 +146,11 @@ VITE_API_BASE=http://127.0.0.1:3000
 ### 3. 生产构建（可选）
 
 ```bash
-npm run build        # 生成版本文件 + 编译后端（tsc，输出 dist/）
-npm run build:web    # 生成版本文件 + 构建前端（vite，输出 dist/web/）
-npm run preview      # 本地预览前端构建产物
+npm run build               # 生成版本文件 + 编译后端（tsc，输出 dist/）
+npm run build:web           # 服务端版前端（vite，输出 dist/web/）
+npm run build:web:static    # 纯静态版前端 + 产物自检
+npm run preview             # 本地预览服务端版产物
+npm run preview:static      # 本地预览纯静态版产物（IndexedDB 需要真实 origin，不能用 file://）
 ```
 
 ## 功能说明
@@ -95,7 +163,7 @@ npm run preview      # 本地预览前端构建产物
 | 装柜结果 | 统计卡片（装载率 / 占用体积 / 总重量 / 总件数）+ **装柜步骤（现场作业单，可 3D 高亮、导出 CSV）** + 装入清单 + 分层明细（真实 z 底面分层）+ 未装原因分析 + 3D 逐箱可视化 + 逐箱坐标 CSV 导出 |
 | 多柜循环 | 同柜型循环装柜，输出「需要几个柜」+ 每柜装载率/箱数/货物构成列表 + 点击柜行切换 3D 对比 + 全部柜逐箱坐标 CSV |
 | 方案列表 | 保存的历史方案：加载（回填到装柜计算页）/ **报表**（直接出 PDF 单据）/ 删除 |
-| 应用版本 | 版本号（按 git 提交数自增）+ 完整使用说明 + 已知限制 |
+| 应用版本 | 版本号（按 git 提交数自增）+ 完整使用说明 + **当前是服务端版还是纯静态版** + 已知限制 |
 
 ### 响应式
 
@@ -332,8 +400,21 @@ GEN_VERSION_DEBUG=1 npm run genversion   # 打印脏检查的解析过程，排�
 ## 测试
 
 ```bash
-npm test   # 算法引擎 + API 57 项测试（先 tsc 编译，再 node --test）
+npm test   # 87 项（先 tsc 编译，再 node --test）
 ```
+
+覆盖范围：
+
+| 测试文件 | 覆盖 |
+|---|---|
+| `algorithm.test.ts` | 算法引擎 73 项：6 策略 × 多场景、堆码/承托约束、多柜循环、无限数量语义、装 0 缺陷回归 |
+| `local-store.test.ts` | 静态版数据层：CRUD 语义、种子规则、脏数据归一化、**浏览器侧算法算出 966 箱 / 95.96%** |
+| `static-boundary.test.ts` | 架构边界：`src/web` 不许 import `node:*` / 服务端代码；算法层不许出 `src/`；两个数据实现方法集齐全 |
+
+> 静态版的数据层能在 Node 里被测到，靠的是把 IndexedDB 抽象成一个 5 方法的窄接口
+> （`rowStore.ts`），测试注入内存实现、跑**完全相同的代码路径**。
+> 内存实现**刻意复现**了真实 IndexedDB 的一个坑（新增时写 `id: undefined` 会判非法键），
+> 否则测试用一个「宽容」的假实现就永远测不出那个 bug。
 
 诊断脚本：
 
@@ -342,7 +423,9 @@ npm run build && node scripts/diag.mjs                # 约束生效、多柜、
 npm run build && node scripts/strategy-compare.mjs    # 6 策略区分度（8 个差异化场景）
 npm run build && node scripts/mixed-load-compare.mjs  # 混装效果（1/2/3 货物 × 6 策略 + 几何正确性）
 npm run build && node scripts/config-probe.mjs --seq   # 逐条候选腿：分项箱数 + 块序列（调参必备）
-node scripts/camera-up-check.mjs                    # 相机 up 向量对三轴屏幕走向的影响
-# 浏览器打开 http://localhost:5173/dev-3d.html       # 3D 视图独立验证页（不过计算页表单）
+npm run check:static                                  # 纯静态产物体检（build:web:static 会自动跑）
+node scripts/find-algo-markers.mjs                    # 审计可用的「算法指纹」标记
+node scripts/camera-up-check.mjs                      # 相机 up 向量对三轴屏幕走向的影响
+# 浏览器打开 http://localhost:5173/dev-3d.html         # 3D 视图独立验证页（不过计算页表单）
 ```
 *（内容由AI生成，仅供参考）*

@@ -11,8 +11,12 @@
     "demo": "npm run build && node dist/scripts/demo.js",
     "server": "npm run build && node dist/src/server/index.js",
     "dev": "npm run genversion && vite",
+    "dev:static": "npm run genversion && vite --mode static",
     "build:web": "npm run genversion && vite build",
+    "build:web:static": "npm run genversion && vite build --mode static && node scripts/check-static-bundle.mjs",
+    "check:static": "node scripts/check-static-bundle.mjs",
     "preview": "vite preview",
+    "preview:static": "vite preview --mode static --outDir dist/web",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
