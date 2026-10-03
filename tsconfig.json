@@ -17,5 +17,13 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["src/algorithm/**/*.ts", "src/db/**/*.ts", "src/server/**/*.ts", "src/types/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
+  "include": [
+    "src/algorithm/**/*.ts",
+    "src/db/**/*.ts",
+    "src/server/**/*.ts",
+    "src/types/**/*.ts",
+    "src/web/lib/**/*.ts",
+    "test/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }

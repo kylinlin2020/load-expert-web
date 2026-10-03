@@ -291,11 +291,34 @@ export interface LoadOptions {
   // preciseFitting / rotationAxis / cornerPriority / oversizePolicy
 }
 
-/** 多柜自动装载结果（同柜型循环装载） */
-export interface MultiPlanResult {
-  /** 每柜装载结果（仅含至少装入一件的有效柜） */
+/**
+ * 一种柜型的装载结果（多选柜型时每个柜型各一份）
+ *
+ * 引入分组的原因：多选柜型是**对比**语义 —— 每个柜型都用**同一批货物数量**
+ * 独立算一遍，回答"这批货用 40HQ / 45HQ / 20GP 分别能装多少、装载率多少"。
+ * 各组之间**不可相加**（同一批货被算了多次），所以必须分组呈现，
+ * 不能把它们的箱数加起来当成"总共装了 N 箱"。
+ */
+export interface ContainerTypeGroup {
+  /** 柜型 id */
+  containerId: number | string;
+  /** 该柜型下的各个柜（仅含至少装入一件的有效柜） */
   plans: PackResult[];
-  /** 使用柜数 */
+  /** 该柜型用了几个柜 */
+  totalContainers: number;
+  /** 该柜型共装入件数（该组所有柜之和） */
+  pieces: number;
+  /** 该柜型的总体装载率 = 该组已装体积 / 该组总柜内容积（0~1） */
+  overallRate: number;
+  /** 该柜型装完后仍未装入的货物及数量（对比时最该看的一列） */
+  remaining: Array<{ boxId: string; qty: number }>;
+}
+
+/** 多柜自动装载结果（同柜型循环装载，或多柜型对比） */
+export interface MultiPlanResult {
+  /** 每柜装载结果（仅含至少装入一件的有效柜）；各 `groups[].plans` 的扁平合并 */
+  plans: PackResult[];
+  /** 使用柜数（所有组之和） */
   totalContainers: number;
   /** 已装总体积（mm^3） */
   totalLoadedVolume: number;
@@ -303,6 +326,14 @@ export interface MultiPlanResult {
   totalContainerVolume: number;
   /** 总体装载率 = totalLoadedVolume / totalContainerVolume（0~1） */
   overallRate: number;
-  /** 未能装入的剩余货物及数量 */
+  /**
+   * 未能装入的剩余货物及数量
+   *
+   * 多柜型对比时**各组相互独立**，不存在全局剩余，故此处只取"装入最多的那一组"
+   * 的剩余（即最好的柜型也装不下的部分）—— 那才是真正需要换柜型/加工的信息。
+   * 逐柜型的剩余看 `groups[].remaining`。
+   */
   remaining: Array<{ boxId: string; qty: number }>;
+  /** 按柜型分组的明细；后端单柜型接口不返回，由前端多柜型对比时构造 */
+  groups?: ContainerTypeGroup[];
 }

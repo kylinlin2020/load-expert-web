@@ -8,8 +8,8 @@
  *
  * 全部为纯函数（无 Vue 依赖），便于单独验证。
  */
-import type { Box, CartonPlacement, PackResult, Placement } from '../types';
-import { expandResult } from '../../algorithm/expand';
+import type { Box, CartonPlacement, PackResult, Placement } from '../../types/index.js';
+import { expandResult } from '../../algorithm/expand.js';
 
 /** 姿态中文名（按 ORIENTATION_AXIS_ORDERS 的轴序推导：哪一轴朝上决定平/侧/立） */
 export const ORIENTATION_NAMES = ['平放·长沿柜长', '平放·长沿柜宽', '侧放·宽朝上', '侧放·宽朝上', '立放·长朝上', '立放·长朝上'] as const;
@@ -101,7 +101,14 @@ export function buildLayerRows(cartons: readonly CartonPlacement[], result: Pack
     if (!result) return [];
     const groups = new Map<number, { zMin: number; zMax: number; items: Placement[] }>();
     for (const p of result.placements) {
-      const g = groups.get(Math.round(p.z)) ?? { zMin: p.z, zMax: p.z + p.dims[2], items: [] };
+      // items 必须显式标注：写 `items: []` 会被推成 never[]，随后 push 就报
+    // "Argument of type 'Placement' is not assignable to parameter of type 'never'"。
+    // 这个目录原先不在 tsconfig include 里，所以一直没被发现。
+    const g: { zMin: number; zMax: number; items: Placement[] } = groups.get(Math.round(p.z)) ?? {
+      zMin: p.z,
+      zMax: p.z + p.dims[2],
+      items: [],
+    };
       g.zMax = Math.max(g.zMax, p.z + p.dims[2]);
       g.items.push(p);
       groups.set(Math.round(p.z), g);

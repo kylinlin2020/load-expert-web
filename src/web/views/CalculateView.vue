@@ -25,14 +25,14 @@
             <el-option
               v-for="c in containers"
               :key="c.id"
-              :value="c.id"
+              :value="String(c.id)"
               :label="`${c.label ? c.label + ' · ' : ''}${c.name}（内 ${c.innerLength}×${c.innerWidth}×${c.innerHeight}）`"
             />
           </el-select>
           <div class="pick-hint">
             已选 {{ containerIds.length }} 个柜型
             <template v-if="containerMode === 'single'">（单选模式：只保留最后选择的一项）</template>
-            <template v-else>（多柜循环时按所选顺序依次装载，各柜型用完再换下一种）</template>
+            <template v-else>（多选：每种柜型各算一份结果并对比）</template>
           </div>
         </el-card>
 
@@ -120,7 +120,8 @@
           <div class="strategy-hint">
             <template v-if="loadMode === 'multi'">
               <strong>多柜循环装载</strong><br />
-              同柜型循环装柜，直到全部装完或连续数柜一件都装不进；用于「需要多少个柜」的测算
+              所选每种柜型各自循环装柜到装完，用于「每种柜型分别需要几个柜」的测算；
+              多选柜型时下方会按柜型分组对比
             </template>
           </div>
           <div class="strategy-row mt12">
@@ -175,7 +176,13 @@
       <!-- 右：结果 -->
       <el-col :span="16">
         <el-card shadow="never" header="计算结果" v-loading="computing">
-          <template v-if="result && loadMode === 'single'">            <!-- 统计卡片 -->
+          <!--
+            单柜结果。**必须排除 multiResult**：
+            多选柜型时走的也是"分组"那条路（对比语义），此时 result 会被设成
+            第一组的柜，若这里只看 loadMode，单柜视图会抢在对比视图前面渲染，
+            表现就是"选了多个柜型却只看到第一个柜型的结果"。
+          -->
+          <template v-if="result && loadMode === 'single' && !multiResult">            <!-- 统计卡片 -->
             <el-row :gutter="12">
               <el-col :span="6">
                 <div class="stat-card">
@@ -342,31 +349,104 @@
               <el-button :disabled="cartons.length === 0" @click="exportCoords">导出逐箱坐标 CSV</el-button>
             </div>
           </template>
-          <!-- 多柜循环结果 -->
-          <template v-else-if="multiResult && loadMode === 'multi'">
-            <el-row :gutter="12">
+          <!-- 多柜结果：单柜型循环装载 或 多柜型对比 -->
+          <template v-else-if="multiResult">
+            <!--
+              柜型对比表（多选柜型时才有）：每种柜型用**同一批货**独立算了一遍，
+              所以各行之间**不可相加**（同一批货被重复计算），必须分组呈现。
+              这一块就是"选了多个柜型却只看到第一个结果"的正解。
+            -->
+            <el-card v-if="typeGroups.length > 1" shadow="never" class="cmp-card">
+              <div class="sec-title">柜型对比（各柜型用同一批货物独立计算，不可相加）</div>
+              <el-table :data="typeGroups" size="small" border stripe @current-change="onGroupRowChange">
+                <el-table-column label="柜型" min-width="150">
+                  <template #default="{ row }">
+                    <span :class="{ 'cmp-best': row.group === bestGroupIndex }">
+                      {{ containerName(row.g.containerId) }}
+                    </span>
+                    <el-tag v-if="row.group === bestGroupIndex" size="small" type="success" class="cmp-tag">
+                      {{ typeGroups.length > 1 && allSamePieces ? '效率最高' : '装得最多' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="柜数" width="70" align="right">
+                  <template #default="{ row }">{{ row.g.totalContainers }}</template>
+                </el-table-column>
+                <el-table-column label="共装箱数" width="96" align="right">
+                  <template #default="{ row }"><strong>{{ row.g.pieces }}</strong></template>
+                </el-table-column>
+                <el-table-column label="总体装载率" width="170">
+                  <template #default="{ row }">
+                    <el-progress
+                      :percentage="Math.round(row.g.overallRate * 100)"
+                      :stroke-width="12"
+                      :status="row.g.overallRate >= 0.9 ? 'success' : undefined"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column label="装完仍剩" width="110" align="right">
+                  <template #default="{ row }">
+                    <span :class="{ 'cmp-bad': row.g.remaining.length > 0 }">
+                      {{ row.g.remaining.reduce((s, r) => s + r.qty, 0) }} 件 / {{ row.g.remaining.length }} 种
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="货物构成" min-width="130">
+                  <template #default="{ row }">
+                    <el-tag v-for="it in groupCargoSummary(row.g)" :key="it.boxId" size="small" class="plan-tag">
+                      {{ it.name }} ×{{ it.count }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="layer-hint">点击柜型行可查看该柜型的柜列表</div>
+            </el-card>
+
+            <el-row :gutter="12" :class="{ mt12: typeGroups.length > 1 }">
               <el-col :span="6">
                 <div class="stat-card">
-                  <div class="stat-label">需要柜数</div>
-                  <div class="stat-value">{{ multiResult.totalContainers }}</div>
+                  <!--
+                    对比模式下**不能**把各型柜数加起来：同一批货被算了 N 遍，
+                    "7 个柜"既不是真要 7 个柜，也没有任何决策含义。
+                    故改成"对比了几种柜型"，把柜数留在下方按柜型分组的柜列表里看。
+                  -->
+                  <div class="stat-label">
+                    {{ typeGroups.length > 1 ? '对比柜型数' : '需要柜数' }}
+                  </div>
+                  <div class="stat-value">
+                    {{ typeGroups.length > 1 ? typeGroups.length : multiResult.totalContainers }}
+                  </div>
                 </div>
               </el-col>
               <el-col :span="6">
                 <div class="stat-card">
-                  <div class="stat-label">总体装载率</div>
-                  <el-progress type="dashboard" :percentage="Math.round(multiResult.overallRate * 100)" :width="88" />
+                  <div class="stat-label">
+                    {{ typeGroups.length > 1 ? '最优柜型装载率' : '总体装载率' }}
+                  </div>
+                  <el-progress
+                    type="dashboard"
+                    :percentage="Math.round((typeGroups.length > 1 ? bestGroup?.g.overallRate ?? 0 : multiResult.overallRate) * 100)"
+                    :width="88"
+                  />
                 </div>
               </el-col>
               <el-col :span="6">
                 <div class="stat-card">
-                  <div class="stat-label">总体积 (m³)</div>
-                  <div class="stat-value">{{ (multiResult.totalLoadedVolume / 1e9).toFixed(2) }}</div>
+                  <div class="stat-label">
+                    {{ typeGroups.length > 1 ? '最优柜型箱数' : '总体积 (m³)' }}
+                  </div>
+                  <div class="stat-value">
+                    <template v-if="typeGroups.length > 1">{{ bestGroup?.g.pieces ?? 0 }}</template>
+                    <template v-else>{{ (multiResult.totalLoadedVolume / 1e9).toFixed(2) }}</template>
+                  </div>
                 </div>
               </el-col>
               <el-col :span="6">
                 <div class="stat-card">
-                  <div class="stat-label">剩余货物</div>
-                  <div class="stat-value">{{ multiResult.remaining.length }}</div>
+                  <div class="stat-label">最优柜型仍剩</div>
+                  <div class="stat-value">
+                    {{ multiResult.remaining.reduce((s, r) => s + r.qty, 0) }}
+                  </div>
                 </div>
               </el-col>
             </el-row>
@@ -376,14 +456,14 @@
               class="mt12"
               type="warning"
               :closable="false"
-              :title="`有 ${multiResult.remaining.length} 种货物未能全部装入，详见下方剩余清单`"
+              :title="`即使装载最多的柜型，仍有 ${multiResult.remaining.length} 种货物装不下，详见下方剩余清单`"
             />
 
             <el-row :gutter="12" class="mt12">
               <!-- 柜列表 -->
               <el-col :span="9">
                 <el-table
-                  :data="multiResult.plans"
+                  :data="visiblePlans"
                   size="small"
                   border
                   highlight-current-row
@@ -392,6 +472,9 @@
                 >
                   <el-table-column label="柜" width="60" align="center">
                     <template #default="{ $index }">{{ $index + 1 }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="typeGroups.length > 1" label="柜型" width="110">
+                    <template #default="{ row }">{{ shortContainerName(row.container.id) }}</template>
                   </el-table-column>
                   <el-table-column label="装载率" width="88" align="right">
                     <template #default="{ row }">{{ (row.loadRate * 100).toFixed(1) }}%</template>
@@ -430,7 +513,7 @@
             <div class="mt12">
               <el-button :disabled="activePlan === null" @click="exportMultiCoords">导出全部柜逐箱坐标 CSV</el-button>
               <!--
-                多柜循环下也给出单据导出：现场是"一个柜一张作业单"，
+                多柜下也给出单据导出：现场是"一个柜一张作业单"，
                 打印当前选中的这个柜（页眉会标"第 N / M 柜"），
                 逐个柜切着导出即可，不必先把每个柜单独算一遍。
               -->
@@ -463,10 +546,20 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 import api, { type PlanRecord } from '../api/client';
-import type { Box, CartonPlacement, Container, LoadOptions, MultiPlanResult, PackResult, Placement } from '../../types';
+import type {
+  Box,
+  CartonPlacement,
+  Container,
+  ContainerTypeGroup,
+  LoadOptions,
+  MultiPlanResult,
+  PackResult,
+  Placement,
+} from '../../types';
 import { expandResult } from '../../algorithm/expand';
 import Packing3D from '../components/Packing3D.vue';
 import { setPlanDoc } from '../store/planDoc';
+import { isBetterGroup, mergeGroups, toGroup } from '../lib/containerGroups';
 import {
   buildCartons,
   buildLayerRows,
@@ -508,12 +601,55 @@ const containerMode = ref<'single' | 'multi'>('single');
 const containerIds = ref<string[]>([]);
 const containerId = computed<string | number | null>(() => containerIds.value[0] ?? null);
 
+/**
+ * 把 containerIds 归一化：去重 + 只保留柜型库里真实存在的 id
+ *
+ * ## 为什么需要（实测踩到）
+ *
+ * 从「方案列表」加载历史方案时 `containerIds.value = [plan.containerId]`，
+ * 而 plan 里的 id 与 `containers` 里的 id **类型可能不同**（一个是字符串 "3"、
+ * 一个是数字 3）。el-select 的 multiple 用**严格相等**比对选项值，
+ * 于是那个字符串 id 匹配不到任何选项 —— 界面上多出一个只显示原始值的标签，
+ * 计算时也会给柜型查表失败，最终对比表里出现两行同名柜型。
+ *
+ * 所以按 `String(id)` 匹配、再统一替换成库里的原始值。
+ */
+function normalizeContainerIds(ids: readonly (string | number)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of ids) {
+    const c = containers.value.find((x) => String(x.id) === String(raw));
+    if (!c) {
+      continue; // 库里已不存在的柜型（陈旧 id）：直接丢掉，不留一个解析不出来的幽灵值
+    }
+    const key = String(c.id);
+    if (seen.has(key)) {
+      continue; // 同一个柜型被选了两遍（多选切换时的重复项）
+    }
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 /** 已选柜型（按柜型管理的原始顺序排列，便于对照） */
-const selectedContainers = computed<Container[]>(() => containers.value.filter((c) => containerIds.value.includes(c.id)));
+const selectedContainers = computed<Container[]>(() => containers.value.filter((c) => containerIds.value.includes(String(c.id))));
 
 watch(containerIds, (v) => {
-  if (containerMode.value === 'single' && v.length > 1) {
-    containerIds.value = [v[v.length - 1]];
+  // 先归一化（去重 + 丢弃库里不存在的 id），再套单选约束
+  const norm = normalizeContainerIds(v);
+  const next = containerMode.value === 'single' ? norm.slice(-1) : norm;
+  if (next.length !== v.length || next.some((x, i) => x !== v[i])) {
+    containerIds.value = next;
+    return; // 赋值会再次触发本 watch，归一化后自然收敛
+  }
+}, { deep: true });
+
+/** 柜型数据到达后，把已选值重新对齐一次（此时才能查到真实 id） */
+watch(containers, () => {
+  const norm = normalizeContainerIds(containerIds.value);
+  if (norm.length !== containerIds.value.length || norm.some((x, i) => x !== containerIds.value[i])) {
+    containerIds.value = norm;
   }
 });
 
@@ -563,6 +699,13 @@ const loadMode = ref<'single' | 'multi'>('single');
 const multiResult = ref<MultiPlanResult | null>(null);
 /** 当前选中的柜（用于 3D 对比） */
 const activePlanIndex = ref(0);
+/**
+ * 多柜型对比时当前选中的柜型分组下标
+ *
+ * 柜列表按所选柜型顺序平铺（group0 的柜在前，group1 的柜在后），
+ * 所以点某一行要同时知道"它是第几个柜"和"它属于哪个柜型"。
+ */
+const activeGroupIndex = ref(0);
 
 /** 策略名称与几何特征说明（与算法侧 STRATEGY_NAMES / STRATEGY_HINTS 对齐） */
 const STRATEGY_NAMES: Record<number, string> = {
@@ -828,7 +971,7 @@ async function loadBaseData() {
   try {
     containers.value = await api.listContainers();
     if (containers.value.length && containerIds.value.length === 0) {
-      containerIds.value = [containers.value[containers.value.length - 1].id];
+      containerIds.value = [String(containers.value[containers.value.length - 1].id)];
     }
   } catch (e) {
     ElMessage.error((e as Error).message);
@@ -908,77 +1051,52 @@ function validateSelection(): Array<{ boxId: string; qty: number }> | null {
 }
 
 /**
- * 多柜循环装载：**按所选柜型的顺序依次装载**
+ * 多柜型装载：**每个选中的柜型各算一份，结果按柜型分组**
  *
- * 用户要求「柜型选择支持单选和多选」。多选多个柜型时的语义是
- * "这批货可以用这些柜型装" —— 于是按用户勾选的顺序，一种柜型装到底
- * （装到再装一个就空为止），再换下一种；所有柜型都过一遍后收工。
+ * ## 语义（这一版改过一次）
+ *
+ * 上一版我按"按勾选顺序依次装载、装完就换下一种"实现，结果是
+ * **前一种柜型装得下就轮不到后面的柜型** —— 用户反馈"多选了柜型，
+ * 结果还是第一个柜子规格的数据，没有后面柜型的装柜结果"，正是这个 `break` 造成的。
+ * 那版语义还有个更实际的问题：它把"多选柜型"当成了 fallback 链，
+ * 而选多个柜型的真实动机是**对比**（这批货用 40HQ 和 45HQ 分别能装多少）。
+ *
+ * 现在的语义：
+ * - 每个选中的柜型都用**同一批货物数量**独立算一遍（多柜循环时该柜型自己循环到装完）
+ * - 结果按柜型分组呈现，**组与组不相加**（同一批货被算了多次，加起来是重复计数）
+ *
+ * 保留的能力：单选柜型 + 多柜循环 = 原来的"同柜型循环、需要几个柜"，未受影响。
  *
  * ## 为什么在前端编排，而不是给后端加一个"多柜型"接口
- * - 后端 `planMultiContainer` 只吃**一种**容器，语义干净、已被 64 项测试覆盖；
- *   改它的签名去接数组，等于把"一个柜型装到底"和"换柜型"两件事糅在一起。
+ * - 后端 `planMultiContainer` 只吃**一种**容器，语义干净、已被测试覆盖；
+ *   改它的签名去接数组，等于把"一种柜型循环装柜"和"多柜型对比"两件事糅在一起。
  * - 前端编排 = 复用同一个成熟端点若干次，每种柜型仍各自跑一遍原算法。
- *   代价是要在前端把各次结果合成一个 `MultiPlanResult`，逻辑集中在下面的
- *   `mergeMultiResults` 一个函数里，可测。
+ *   合成 `MultiPlanResult` 的逻辑集中在 `mergeMultiResults` 一个纯函数里，可测。
  *
- * `maxEmptyRounds: 1` —— 一种柜型连一箱都装不进，就立刻换下一种，
+ * `maxEmptyRounds: 1` —— 循环装载时一种柜型连一箱都装不进就停，
  * 免得每种柜型白跑默认的 3 轮完整计算。
  */
-async function calculateAcrossContainers(
+async function calculateByContainerTypes(
   items: Array<{ boxId: string; qty: number }>,
   options: LoadOptions,
 ): Promise<MultiPlanResult> {
-  let remaining = items.map((i) => ({ ...i }));
-  const plans: PackResult[] = [];
+  const groups: ContainerTypeGroup[] = [];
 
   for (const cid of containerIds.value) {
-    if (remaining.length === 0) break;
+    // 每组都用**原始数量**：这是对比，不是接力。
+    // 上一版在这里把上一组装掉的量扣掉，于是后一组只能拿到残量 ——
+    // 那样算出来的不是"这个柜型能装多少"，而是"前面用完之后还剩多少能装"。
     const m = await api.calculateMulti({
       containerId: cid,
-      items: remaining,
+      items,
       strategy: strategy.value,
       options,
       maxEmptyRounds: 1,
     });
-    plans.push(...m.plans);
-
-    // 扣减剩余：按本次装入数逐项减，减到 0 的从剩余清单里去掉
-    const placed = new Map<string, number>();
-    for (const p of m.plans) {
-      for (const pl of p.placements) {
-        placed.set(pl.boxId, (placed.get(pl.boxId) ?? 0) + pl.count);
-      }
-    }
-    remaining = remaining
-      .map((r) => ({ boxId: r.boxId, qty: Math.max(0, r.qty - (placed.get(r.boxId) ?? 0)) }))
-      .filter((r) => r.qty > 0);
+    groups.push(toGroup(cid, m));
   }
 
-  return mergeMultiResults(plans, remaining);
-}
-
-/**
- * 把多次调用攒下的柜结果合成一个 `MultiPlanResult`（后端单柜型的返回结构）
- *
- * 汇总口径与 `planMultiContainer` 尾部一致：总体装载率 = 已装体积 / 总柜内容积，
- * 且**分母只算真正装了东西的柜**（plans 里本来就只含有效柜）。
- */
-function mergeMultiResults(plans: PackResult[], remaining: Array<{ boxId: string; qty: number }>): MultiPlanResult {
-  const totalLoadedVolume = plans.reduce((s, p) => s + p.usedVolume, 0);
-  const totalContainerVolume = plans.reduce((s, p) => s + containerVolumeOf(p.container), 0);
-  return {
-    plans,
-    totalContainers: plans.length,
-    totalLoadedVolume,
-    totalContainerVolume,
-    overallRate: totalContainerVolume > 0 ? totalLoadedVolume / totalContainerVolume : 0,
-    remaining,
-  };
-}
-
-/** 柜内容积（mm³）。与算法侧 containerVolume 同一公式，此处独立实现以免跨层依赖 */
-function containerVolumeOf(c: { innerLength: number; innerWidth: number; innerHeight: number }): number {
-  return c.innerLength * c.innerWidth * c.innerHeight;
+  return mergeGroups(groups);
 }
 
 async function doCalculate() {
@@ -993,11 +1111,16 @@ async function doCalculate() {
   computing.value = true;
   try {
     const options = buildOptions();
-    if (loadMode.value === 'multi') {
-      const m = await calculateAcrossContainers(items, options);
+    // 分支条件是「多选柜型」而不是「多柜循环」：
+    // 选多个柜型时**每个柜型都要有自己的装柜结果**（对比语义），
+    // 这跟单柜/多柜循环无关 —— 单柜模式下多选柜型同样要出多份结果，
+    // 否则用户选了 3 个柜型却只看到第一个的结果（这正是被反馈的那个问题）。
+    if (containerIds.value.length > 1 || loadMode.value === 'multi') {
+      const m = await calculateByContainerTypes(items, options);
       multiResult.value = m;
       result.value = m.plans[0] ?? null;
       activePlanIndex.value = 0;
+      activeGroupIndex.value = 0;
       rejectedList.value = m.remaining.map((r) => ({
         boxId: r.boxId,
         reason: 'no-fit',
@@ -1005,14 +1128,25 @@ async function doCalculate() {
       highlightBoxId.value = null;
       highlightPlacements.value = null;
       loadTableRef.value?.setCurrentRow(null);
+      const groups = m.groups ?? [];
       const left = m.remaining.length;
-      const kinds = new Set(m.plans.map((p) => p.container.id)).size;
-      const kindNote = kinds > 1 ? `（含 ${kinds} 种柜型）` : '';
-      ElMessage.success(
-        left > 0
-          ? `需要 ${m.totalContainers} 个柜${kindNote}；${left} 种货物有剩余`
-          : `需要 ${m.totalContainers} 个柜${kindNote}，全部装完`,
-      );
+      if (groups.length > 1) {
+        // 对比模式：把"哪种柜型装得多"直接说出来，别让用户自己比表
+        const best = [...groups].sort((a, b) => (isBetterGroup(a, b) ? -1 : isBetterGroup(b, a) ? 1 : 0))[0];
+        ElMessage.success(
+          `已对比 ${groups.length} 种柜型：` +
+            groups
+              .map((g) => `${containerName(g.containerId)} ${g.pieces} 箱/${g.totalContainers} 柜/${(g.overallRate * 100).toFixed(0)}%`)
+              .join('，') +
+            `；最优是 ${containerName(best.containerId)}`,
+        );
+      } else {
+        ElMessage.success(
+          left > 0
+            ? `需要 ${m.totalContainers} 个柜；${left} 种货物有剩余`
+            : `需要 ${m.totalContainers} 个柜，全部装完`,
+        );
+      }
     } else {
       multiResult.value = null;
       result.value = await api.calculate({
@@ -1034,12 +1168,64 @@ async function doCalculate() {
   }
 }
 
-/** 当前选中的柜（多柜模式下用于 3D 对比） */
+/** 柜型的显示名（"40HQ · 40 尺高柜"），结果分组提示用 */
+function containerName(cid: number | string): string {
+  const c = containers.value.find((x) => String(x.id) === String(cid));
+  return c ? `${c.label ? c.label + ' · ' : ''}${c.name}` : `柜型 ${cid}`;
+}
+
+/** 柜型分组（多选柜型时每个柜型一组；单柜型时也只有一组） */
+const typeGroups = computed<Array<{ group: number; g: ContainerTypeGroup }>>(() =>
+  (multiResult.value?.groups ?? []).map((g, i) => ({ group: i, g })),
+);
+
+/**
+ * 各柜型是否都装进了同样多的件数
+ *
+ * 数量填「不限」时会**必然发生**：每种柜型都一直装到自己的几何上限，
+ * 总量收敛到货物总体积，于是"共装箱数"这一列对所有柜型都一样，毫无区分度。
+ * 这时该看的是装载率和柜数，故标记文案要跟着变（见模板里的「效率最高」）。
+ */
+const allSamePieces = computed<boolean>(() => {
+  const gs = typeGroups.value;
+  if (gs.length < 2) return false;
+  const first = gs[0].g.pieces;
+  return gs.every((x) => x.g.pieces === first);
+});
+
+/** 「最优柜型」下标（判定见 lib/containerGroups.isBetterGroup） */
+const bestGroupIndex = computed<number>(() => {
+  const gs = typeGroups.value;
+  if (gs.length === 0) return -1;
+  let best = 0;
+  for (let i = 1; i < gs.length; i++) {
+    if (isBetterGroup(gs[i].g, gs[best].g)) best = i;
+  }
+  return best;
+});
+
+const bestGroup = computed(() => (bestGroupIndex.value >= 0 ? typeGroups.value[bestGroupIndex.value] : null));
+
+/**
+ * 柜列表当前显示哪些柜
+ *
+ * 多选柜型时按**所选柜型分组**过滤，而不是把所有柜平铺 ——
+ * 平铺的话用户会看到"40HQ 柜1、40HQ 柜2、45HQ 柜1、45HQ 柜2"混在一起，
+ * 很难看出哪个柜属于哪种柜型。
+ */
+const visiblePlans = computed<PackResult[]>(() => {
+  const gs = typeGroups.value;
+  if (gs.length === 0) return multiResult.value?.plans ?? [];
+  if (gs.length === 1) return gs[0].g.plans;
+  return gs[activeGroupIndex.value]?.g.plans ?? [];
+});
+
+/** 当前选中的柜（多柜/多柜型下用于 3D 对比） */
 const activePlan = computed<PackResult | null>(() => {
-  if (loadMode.value !== 'multi' || !multiResult.value) {
+  if (!multiResult.value) {
     return result.value;
   }
-  return multiResult.value.plans[activePlanIndex.value] ?? null;
+  return visiblePlans.value[activePlanIndex.value] ?? visiblePlans.value[0] ?? null;
 });
 
 /** 某柜的货物构成（用于柜列表标签） */
@@ -1051,13 +1237,43 @@ function planCargoSummary(plan: PackResult): Array<{ boxId: string; name: string
   return [...m.entries()].map(([boxId, count]) => ({ boxId, name: boxMeta(boxId)?.name ?? `货物 ${boxId}`, count }));
 }
 
+/** 柜型的短名（柜列表列宽有限，只显示 label 或 name 之一） */
+function shortContainerName(cid: number | string): string {
+  const c = containers.value.find((x) => String(x.id) === String(cid));
+  if (!c) return String(cid);
+  return c.label || c.name;
+}
+
+/** 某柜型的货物构成（柜型对比行用） */
+function groupCargoSummary(g: ContainerTypeGroup): Array<{ boxId: string; name: string; count: number }> {
+  const m = new Map<string, number>();
+  for (const plan of g.plans) {
+    for (const p of plan.placements) {
+      m.set(p.boxId, (m.get(p.boxId) ?? 0) + p.count);
+    }
+  }
+  return [...m.entries()].map(([boxId, count]) => ({ boxId, name: boxMeta(boxId)?.name ?? `货物 ${boxId}`, count }));
+}
+
+/** 点击柜行：切到该柜的 3D */
 function onPlanRowChange(row: PackResult | null) {
   if (!row || !multiResult.value) return;
-  const idx = multiResult.value.plans.indexOf(row);
+  // 索引必须在 **visiblePlans** 里找：柜列表按柜型分组过滤，
+  // 用扁平 plans 的下标会串到别的柜型去（这正是分组后必须改的地方）。
+  const idx = visiblePlans.value.indexOf(row);
   if (idx >= 0) {
     activePlanIndex.value = idx;
     highlightBoxId.value = null;
   }
+}
+
+/** 点击柜型对比行：切换下方柜列表到该柜型 */
+function onGroupRowChange(row: { group: number; g: ContainerTypeGroup } | null) {
+  if (!row) return;
+  activeGroupIndex.value = row.group;
+  activePlanIndex.value = 0;
+  highlightBoxId.value = null;
+  highlightPlacements.value = null;
 }
 
 /** 导出全部柜的逐箱坐标（每柜一段，含柜号列） */
@@ -1066,7 +1282,7 @@ function exportMultiCoords() {
     ElMessage.warning('没有可导出的柜');
     return;
   }
-  const header = ['柜号', '序号', '货物ID', '货物名称', 'SKU', '方向', 'X(mm)', 'Y(mm)', 'Z(mm)', '长(mm)', '宽(mm)', '高(mm)', '体积(m³)', '重量(kg)'];
+  const header = ['柜号', '柜型', '序号', '货物ID', '货物名称', 'SKU', '方向', 'X(mm)', 'Y(mm)', 'Z(mm)', '长(mm)', '宽(mm)', '高(mm)', '体积(m³)', '重量(kg)'];
   const lines: string[] = [header.join(',')];
   multiResult.value.plans.forEach((plan, pi) => {
     const cartons = expandResult(plan, boxes.value);
@@ -1075,6 +1291,8 @@ function exportMultiCoords() {
       lines.push(
         [
           pi + 1,
+          // 多选柜型时不同柜的规格不同，必须带上柜型，否则这份 CSV 无法区分
+          shortContainerName(plan.container.id),
           ct.index + 1,
           ct.boxId,
           b?.name ?? '',
@@ -1219,7 +1437,7 @@ onMounted(() => {
   if (pending) {
     try {
       const plan = JSON.parse(pending) as PlanRecord;
-      containerIds.value = [plan.containerId];
+      containerIds.value = [String(plan.containerId)];
       containerMode.value = 'single';
       // 恢复历史方案：同时回填数量**与选中状态**（否则货物虽在表里却不会被装载）
       const ids: string[] = [];
@@ -1327,6 +1545,27 @@ onMounted(() => {
 }
 .plan-tag {
   margin: 2px 4px 2px 0;
+}
+/* ── 柜型对比 ── */
+.cmp-card :deep(.el-card__body) {
+  padding: 10px 12px 12px;
+}
+.sec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.cmp-best {
+  font-weight: 600;
+  color: #67c23a;
+}
+.cmp-tag {
+  margin-left: 6px;
+}
+.cmp-bad {
+  color: #e6a23c;
+  font-weight: 600;
 }
 .stat-card {
   text-align: center;
