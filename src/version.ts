@@ -3,6 +3,16 @@
  *
  * 重新生成：`npm run genversion`（build / dev / server 都会自动先跑一遍）
  * 版本规则：0.1.N，N = git 提交数。详见 scripts/gen-version.mjs 的注释。
+ *
+ * ## 为什么 `git status` 里这个文件总是显示为已修改（正常现象）
+ *
+ * 文件里的 commit 数取决于"当前提交数"，而**提交这个文件本身会让提交数 +1** ——
+ * 于是永远差一拍：入库的是 0.1.7，重新生成后是 0.1.8。
+ * 这不是不一致，是数学上的死结（没有不动点）。
+ *
+ * 实际发布的版本号始终正确，因为 build/dev 每次都会先重新生成。
+ * 入库的目的只是给"没有 .git 的源码包"留一个可读的兜底版本。
+ * 所以看到这一个文件长期 modified，直接忽略即可。
  */
 export interface AppVersion {
   /** 完整版本号，如 0.1.12 */
@@ -22,13 +32,13 @@ export interface AppVersion {
 }
 
 export const appVersion: AppVersion = {
-  "version": "0.1.7",
+  "version": "0.1.8",
   "source": "git",
-  "commit": 7,
-  "commitShort": "7a110d8",
-  "commitDate": "2026-10-03T16:12:17+08:00",
+  "commit": 8,
+  "commitShort": "600d28a",
+  "commitDate": "2026-10-03T16:18:31+08:00",
   "dirty": true,
-  "builtAt": "2026-10-03T08:18:23.206Z"
+  "builtAt": "2026-10-03T08:19:25.397Z"
 };
 
 export default appVersion;
