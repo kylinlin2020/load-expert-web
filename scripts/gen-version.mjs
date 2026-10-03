@@ -36,7 +36,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 跑一条 git 命令；任何异常（非仓库、git 未安装、命令失败）都返回 null，不抛 */
+/**
+ * 跑一条 git 命令；任何异常（非仓库、git 未安装、命令失败）都返回 null，不抛
+ *
+ * **刻意不对返回值做 `.trim()`**：多行输出（`status --porcelain`）的首行
+ * 前面两格是状态列（" M" / "M " / "??"），整体 trim 会把首行的前导空格吃掉，
+ * 状态列就错位了，后面按固定列宽 slice 解析必然出错 —— 而且只在**有多个改动**时
+ * 才出错（首行恰好是未暂存改动时），非常难查。单行结果由调用方各自 trim。
+ */
 function git(args) {
   try {
     return execFileSync('git', args, {
@@ -44,7 +51,7 @@ function git(args) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10_000,
-    }).trim();
+    });
   } catch {
     return null;
   }
@@ -73,7 +80,7 @@ const SELF_PATH = 'src/version.ts';
  */
 function hasUncommittedSource() {
   const raw = git(['status', '--porcelain']);
-  if (raw === null) return false;
+  if (!raw) return false;
   const changed = raw
     // 必须按 /\r?\n/ 切：Windows 上 git 输出的是 CRLF，只按 '\n' 切的话
     // 每行末尾会残留一个 '\r'，于是路径变成 "src/version.ts\r"，
@@ -91,10 +98,14 @@ function hasUncommittedSource() {
       return (p.startsWith('"') ? p.slice(1, -1) : p).replace(/\\/g, '/');
     })
     .filter((p) => p !== SELF_PATH);
+  if (process.env.GEN_VERSION_DEBUG) {
+    console.log('[debug] raw =', JSON.stringify(raw));
+    console.log('[debug] changed =', JSON.stringify(changed));
+  }
   return changed.length > 0;
 }
 
-const head = git(['rev-parse', 'HEAD']);
+const head = (git(['rev-parse', 'HEAD']) ?? '').trim();
 let version;
 let source;
 let commit = null;
@@ -103,13 +114,13 @@ let commitDate = null;
 let dirty = null;
 
 if (head) {
-  const count = Number(git(['rev-list', '--count', 'HEAD']) ?? '0');
+  const count = Number((git(['rev-list', '--count', 'HEAD']) ?? '').trim() || '0');
   if (Number.isFinite(count)) {
     version = `${baseMajor}.${baseMinor}.${count}`;
     source = 'git';
     commit = count;
     commitShort = head.slice(0, 7);
-    commitDate = git(['log', '-1', '--format=%cI']);
+    commitDate = (git(['log', '-1', '--format=%cI']) ?? '').trim() || null;
     // 有未提交改动要**显式告诉使用者**：页面上显示的版本号对应的其实是
     // 上一次提交的状态，代码可能已经变了 —— 不标注就是误导。
     dirty = hasUncommittedSource();
