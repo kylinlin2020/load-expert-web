@@ -94,6 +94,11 @@
         <li><strong>装柜计算</strong> → 选柜型 → 从货物管理中选货物并填数量 → 点「开始计算」</li>
         <li>看 3D 与装柜步骤确认无误 → <strong>导出装柜步骤 PDF</strong> 打印带到现场</li>
       </ol>
+      <p class="tip">
+        <strong>请定期到「数据备份」页导出一份 JSON 存到网盘或 U 盘。</strong>
+        录入的货物、柜型、方案在服务端版是后端的一个 SQLite 文件、在静态版是本浏览器的
+        IndexedDB，误删或清浏览器数据都会<strong>永久丢失且无法恢复</strong>。
+      </p>
 
       <h3 class="sec">二、装柜计算页</h3>
 
@@ -238,6 +243,13 @@
         装载率不会因为换了版本而变。<strong>但两边的数据互相独立、不会同步</strong> ——
         静态版里录入的货物不会出现在服务端版，反之亦然。
       </p>
+      <el-alert
+        type="success"
+        show-icon
+        :closable="false"
+        title="但可以用「数据备份」把数据搬到另一套"
+        description="两套构建用的是同一种备份文件格式：在有数据的那一套里「导出为 JSON 文件」，再到想要数据的那一套里「导入 → 覆盖恢复」即可。反过来也行。搬完之后两边各是各的，之后要保持一致就各自定期导出。"
+      />
 
       <h3 class="sec">七、已知限制（据实说明）</h3>
       <div class="limits">
