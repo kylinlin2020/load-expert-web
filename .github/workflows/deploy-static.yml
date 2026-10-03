@@ -54,7 +54,21 @@ jobs:
       - name: 构建纯静态版 + 产物自检
         run: npm run build:web:static
 
+      # enablement: true 是必需的，不是可选的默认值
+      #
+      # 实测踩过：configure-pages@v5 的 `enablement` 默认是 **false**，
+      # 意味着它**不会**去启用 Pages，只是去 Get —— 新仓库上 Pages 尚未启用，
+      # 于是 Get 返回 404，整个 job 失败，deploy 步骤被跳过。
+      # 报错原文：「Please verify that the repository has Pages enabled and
+      # configured to build using GitHub Actions, or consider exploring the
+      # `enablement` parameter for this action.」
+      #
+      # 显式写 true 之后，它会以 build_type=workflow 创建 Pages 站点，
+      # 也就是顺带把「构建来源」设成 GitHub Actions，不需要手动去设置里点。
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist/web
