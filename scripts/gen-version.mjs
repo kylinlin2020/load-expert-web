@@ -75,7 +75,10 @@ function hasUncommittedSource() {
   const raw = git(['status', '--porcelain']);
   if (raw === null) return false;
   const changed = raw
-    .split('\n')
+    // 必须按 /\r?\n/ 切：Windows 上 git 输出的是 CRLF，只按 '\n' 切的话
+    // 每行末尾会残留一个 '\r'，于是路径变成 "src/version.ts\r"，
+    // 跟 SELF_PATH 比永远不相等 → dirty 恒为 true（这个坑踩过一轮）。
+    .split(/\r?\n/)
     .filter((line) => line.trim() !== '')
     // porcelain 每行固定是 "XY PATH"：XY 是两个状态字符 + 一个空格，共 3 字符。
     // 只能从**行首** slice(3)，不能先 trim —— 未暂存改动是 " M path"，
@@ -83,7 +86,7 @@ function hasUncommittedSource() {
     .map((line) => {
       const rest = line.slice(3);
       // 重命名行是 "R  old -> new"，路径取 new
-      const p = rest.includes('->') ? rest.split('->').pop().trim() : rest;
+      const p = rest.includes('->') ? rest.split('->').pop().trim() : rest.trimEnd();
       // git 会给含特殊字符的路径加引号
       return (p.startsWith('"') ? p.slice(1, -1) : p).replace(/\\/g, '/');
     })
