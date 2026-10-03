@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>静态版冒烟验证</title>
+    <style>
+      body { font: 14px/1.9 monospace; padding: 16px; }
+      pre { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>静态版冒烟验证</h1>
+    <p>
+      验证「纯静态版」在真实浏览器 + 真实 IndexedDB 里能算出正确结果。
+      必须用 <code>npm run dev:static</code> 启动（带 <code>--mode static</code>），
+      否则这页验的是服务端版。<br />
+      会在 IndexedDB 里写临时数据，结束前自动清掉。
+    </p>
+    <pre id="out">运行中…</pre>
+    <script type="module" src="/src/web/dev-static-check.ts"></script>
+  </body>
+</html>
