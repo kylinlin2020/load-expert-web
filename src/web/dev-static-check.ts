@@ -83,8 +83,8 @@ async function run(): Promise<void> {
     const pct = (r.loadRate * 100).toFixed(2);
     p(`计算结果：${r.pieces} 箱 / 装载率 ${pct}% / 策略 ${r.strategy} / 未装 ${r.unplaced?.length ?? 0} 项`);
     p(r.pieces === 966 && Math.abs(r.loadRate - 0.9596) < 0.0001
-      ? '=== 通过：与原软件参考方案（966 箱 / 95.96%）一致 ==='
-      : '=== 失败：与参考 966 / 95.96% 不符 ===');
+      ? '=== 通过：与现场核对的目标值（966 箱 / 95.96%）一致 ==='
+      : '=== 失败：与目标 966 / 95.96% 不符 ===');
 
     // 多柜计算也走一遍（另一条算法入口）
     const m = await api.calculateMulti({

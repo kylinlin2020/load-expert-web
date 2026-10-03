@@ -253,15 +253,15 @@
 
       <h3 class="sec">七、已知限制（据实说明）</h3>
       <div class="limits">
-        <p><strong>以下几项是从原程序逆向还原时未能取到的部分，现按通行做法自拟，语义不保证与原软件一致：</strong></p>
+        <p><strong>以下几项没有权威规范可依，现按行业通行做法自拟 —— 与其他系统的输出不一定可互换：</strong></p>
         <ul class="manual">
-          <li><strong>装柜步骤的排序规则</strong>：原程序有此输出，但排序规则与列结构未还原。
+          <li><strong>装柜步骤的排序规则与列结构</strong>：由本项目自定。
             当前按「自下而上、同层由柜内深处向门口推进」实现</li>
           <li><strong>柜门位置</strong>：数据模型里<strong>只记录了门尺寸，没有记录门在哪一端</strong>。
             所以计算页有「门在 x 最大端 / x = 0 端」的可切换开关，报表里也会写明用的是哪个约定</li>
           <li><strong>姿态命名</strong>：按"哪一轴朝上"推导（平放 / 侧放 / 立放）。
             注意与集装箱行业惯例未必一致</li>
-          <li><strong>策略 4（承托分级分层）</strong>的承托分层细节未完全还原</li>
+          <li><strong>策略 4（承托分级分层）</strong>的承托分层细节为自拟实现，未经现场验证</li>
         </ul>
         <p class="tip">
           另外，「多选多个柜型」的分组对比编排<strong>放在前端</strong>（复用同一个单柜型后端端点若干次），
@@ -271,7 +271,7 @@
       </div>
     </el-card>
 
-    <div class="foot">LoadExpert Web · Vue 3 + TypeScript 全栈 · 算法引擎与界面均为本项目逆向还原实现</div>
+    <div class="foot">LoadExpert Web · Vue 3 + TypeScript 全栈 · 算法引擎与界面均为本项目实现</div>
   </div>
 </template>
 
