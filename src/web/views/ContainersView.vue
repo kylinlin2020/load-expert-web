@@ -38,12 +38,12 @@
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑柜型' : '新增柜型'" width="700px" top="8vh">
       <el-form :model="form" label-width="110px">
         <el-row :gutter="12">
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="名称" required>
               <el-input v-model="form.name" placeholder="例如：40 尺高柜" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="标签">
               <el-input v-model="form.label" placeholder="例如：40HQ" />
             </el-form-item>
@@ -55,34 +55,34 @@
 
         <el-divider content-position="left">内尺寸与载重</el-divider>
         <el-row :gutter="12">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="内长 L" required>
               <el-input-number v-model="form.length" :min="1" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="内宽 W" required>
               <el-input-number v-model="form.width" :min="1" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="内高 H" required>
               <el-input-number v-model="form.height" :min="1" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="尺寸单位">
               <el-select v-model="form.dimensionUnit" style="width: 100%">
                 <el-option v-for="u in ['mm', 'cm', 'in']" :key="u" :value="u" :label="u" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="载重">
               <el-input-number v-model="form.weightCapacity" :min="0" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="重量单位">
               <el-select v-model="form.weightUnit" style="width: 100%">
                 <el-option v-for="u in ['kg', 'lb']" :key="u" :value="u" :label="u" />
@@ -93,42 +93,42 @@
 
         <el-divider content-position="left">结构与商务</el-divider>
         <el-row :gutter="12">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="角件 长">
               <el-input-number v-model="form.cornerLength" :min="0" :max="500" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="角件 宽">
               <el-input-number v-model="form.cornerWidth" :min="0" :max="500" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="8">
             <el-form-item label="角件 高">
               <el-input-number v-model="form.cornerHeight" :min="0" :max="500" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="门 宽">
               <el-input-number v-model="form.doorWidth" :min="0" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="门 高">
               <el-input-number v-model="form.doorHeight" :min="0" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="空柜自重">
               <el-input-number v-model="form.emptyWeight" :min="0" :max="100000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="成本">
               <el-input-number v-model="form.cost" :min="0" :max="10000000" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="计量单位">
               <el-input v-model="form.unit" placeholder="柜 / 次" />
             </el-form-item>

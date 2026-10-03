@@ -2,7 +2,12 @@
   <div class="calc-page">
     <el-row :gutter="16">
       <!-- 左：参数配置 -->
-      <el-col :span="8">
+      <!--
+        窄屏折行堆叠：<992px 时左右两栏各占满整行，
+        否则 8/16 的固定比例会把参数栏压到 170px 宽（手机上实测过，完全没法用）。
+        md（992~1199）用 12/12：此时左栏约 470px，仍放得下货物表格所需的 ~416px。
+      -->
+      <el-col :xs="24" :sm="24" :md="12" :lg="8">
         <el-card shadow="never" header="柜型选择">
           <div class="pick-row">
             <el-radio-group v-model="containerMode" size="small">
@@ -174,7 +179,7 @@
       </el-col>
 
       <!-- 右：结果 -->
-      <el-col :span="16">
+      <el-col :xs="24" :sm="24" :md="12" :lg="16">
         <el-card shadow="never" header="计算结果" v-loading="computing">
           <!--
             单柜结果。**必须排除 multiResult**：
@@ -184,25 +189,25 @@
           -->
           <template v-if="result && loadMode === 'single' && !multiResult">            <!-- 统计卡片 -->
             <el-row :gutter="12">
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">装载率</div>
                   <el-progress type="dashboard" :percentage="Math.round(result.loadRate * 100)" :width="88" />
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">占用体积 (m³)</div>
                   <div class="stat-value">{{ (result.usedVolume / 1e9).toFixed(2) }}</div>
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">总重量 (kg)</div>
                   <div class="stat-value">{{ result.totalWeight.toFixed(1) }}</div>
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">总件数</div>
                   <div class="stat-value">{{ result.pieces }}</div>
@@ -218,7 +223,7 @@
             <!-- 三块布局：明细区 + 3D -->
             <el-row :gutter="12" class="mt12">
               <!-- 明细区 -->
-              <el-col :span="10">
+              <el-col :xs="24" :lg="10">
                 <el-tabs v-model="detailTab" class="detail-tabs">
                   <!-- 装柜步骤（现场作业单） -->
                   <el-tab-pane :label="`装柜步骤（${stepRows.length}）`" name="steps">
@@ -337,7 +342,7 @@
               </el-col>
 
               <!-- 3D 图 -->
-              <el-col :span="14">
+              <el-col :xs="24" :lg="14">
                 <Packing3D :result="result" :boxes="boxes" :highlight-box-id="highlightBoxId" :highlight-placements="highlightPlacements" @select="on3DSelect" />
               </el-col>
             </el-row>
@@ -403,7 +408,7 @@
             </el-card>
 
             <el-row :gutter="12" :class="{ mt12: typeGroups.length > 1 }">
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <!--
                     对比模式下**不能**把各型柜数加起来：同一批货被算了 N 遍，
@@ -418,7 +423,7 @@
                   </div>
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">
                     {{ typeGroups.length > 1 ? '最优柜型装载率' : '总体装载率' }}
@@ -430,7 +435,7 @@
                   />
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">
                     {{ typeGroups.length > 1 ? '最优柜型箱数' : '总体积 (m³)' }}
@@ -441,7 +446,7 @@
                   </div>
                 </div>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="12" :sm="8" :md="6">
                 <div class="stat-card">
                   <div class="stat-label">最优柜型仍剩</div>
                   <div class="stat-value">
@@ -461,7 +466,7 @@
 
             <el-row :gutter="12" class="mt12">
               <!-- 柜列表 -->
-              <el-col :span="9">
+              <el-col :xs="24" :lg="9">
                 <el-table
                   :data="visiblePlans"
                   size="small"
@@ -497,7 +502,7 @@
               </el-col>
 
               <!-- 选中柜的 3D -->
-              <el-col :span="15">
+              <el-col :xs="24" :lg="15">
                 <Packing3D
                   v-if="activePlan"
                   :result="activePlan"

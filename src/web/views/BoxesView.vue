@@ -71,48 +71,48 @@
         <el-tab-pane label="基本信息" name="basic">
           <el-form :model="form" label-width="110px">
             <el-row :gutter="12">
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="名称" required>
                   <el-input v-model="form.name" placeholder="例如：纸箱 A" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="描述">
                   <el-input v-model="form.description" placeholder="例如：外箱 5 层瓦楞" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="SKU">
                   <el-input v-model="form.sku" placeholder="例如：SKU-1001" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="批次">
                   <el-input v-model="form.batch" placeholder="例如：2026-09 批" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="颜色">
                   <el-color-picker v-model="form.color" :predefine="PREDEFINED_COLORS" />
                   <span class="form-hint">用于 3D 渲染配色</span>
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="分组">
                   <el-input v-model="form.groupName" placeholder="电子产品 / 日用品" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="单价">
                   <el-input-number v-model="form.unitPrice" :min="0" :max="100000000" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="单位">
                   <el-input v-model="form.unit" placeholder="箱 / 件 / 托盘" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12">
                 <el-form-item label="每箱件数">
                   <el-input-number v-model="form.pcsCount" :min="1" :max="100000" style="width: 100%" />
                 </el-form-item>
@@ -125,39 +125,39 @@
         <el-tab-pane label="尺寸与重量" name="size">
           <el-form :model="form" label-width="110px">
             <el-row :gutter="12">
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="长 L" required>
                   <el-input-number v-model="form.length" :min="1" :max="100000" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="宽 W" required>
                   <el-input-number v-model="form.width" :min="1" :max="100000" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="高 H" required>
                   <el-input-number v-model="form.height" :min="1" :max="100000" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="尺寸单位">
                   <el-select v-model="form.dimensionUnit" style="width: 100%">
                     <el-option v-for="u in ['mm', 'cm', 'in']" :key="u" :value="u" :label="u" />
                   </el-select>
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="毛重">
                   <el-input-number v-model="form.weight" :min="0" :max="100000" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="净重">
                   <el-input-number v-model="form.netWeight" :min="0" :max="100000" placeholder="留空同毛重" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :sm="8">
                 <el-form-item label="重量单位">
                   <el-select v-model="form.weightUnit" style="width: 100%">
                     <el-option v-for="u in ['kg', 'g', 'lb']" :key="u" :value="u" :label="u" />

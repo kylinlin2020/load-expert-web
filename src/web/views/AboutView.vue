@@ -42,28 +42,30 @@
         description="当前版本直接取自 package.json。在项目目录执行 git init 并提交后，每次提交版本号自动 +1。"
       />
 
-      <table class="kv mt12">
-        <tbody>
-          <tr>
-            <th>版本号</th>
-            <td>{{ appVersion.version }}</td>
-            <th>提交数</th>
-            <td>{{ appVersion.commit ?? '—' }}</td>
-          </tr>
-          <tr>
-            <th>短提交号</th>
-            <td>{{ appVersion.commitShort ?? '—' }}</td>
-            <th>提交时间</th>
-            <td>{{ fmtTime(appVersion.commitDate) }}</td>
-          </tr>
-          <tr>
-            <th>本次构建时间</th>
-            <td>{{ fmtTime(appVersion.builtAt) }}</td>
-            <th>版本号规则</th>
-            <td><code>0.1.N</code>，N = git 提交总数</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="tbl-scroll">
+        <table class="kv mt12">
+          <tbody>
+            <tr>
+              <th>版本号</th>
+              <td>{{ appVersion.version }}</td>
+              <th>提交数</th>
+              <td>{{ appVersion.commit ?? '—' }}</td>
+            </tr>
+            <tr>
+              <th>短提交号</th>
+              <td>{{ appVersion.commitShort ?? '—' }}</td>
+              <th>提交时间</th>
+              <td>{{ fmtTime(appVersion.commitDate) }}</td>
+            </tr>
+            <tr>
+              <th>本次构建时间</th>
+              <td>{{ fmtTime(appVersion.builtAt) }}</td>
+              <th>版本号规则</th>
+              <td><code>0.1.N</code>，N = git 提交总数</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </el-card>
 
     <!-- ══════════ 使用说明 ══════════ -->
@@ -107,36 +109,40 @@
       </ul>
 
       <h4>计算策略</h4>
-      <table class="grid">
-        <thead>
-          <tr><th style="width: 52px">策略</th><th style="width: 130px">名称</th><th>几何特征</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="s in [0, 1, 2, 3, 4, 5]" :key="s">
-            <td class="num">{{ s }}</td>
-            <td>{{ STRATEGY_NAMES[s] }}</td>
-            <td>{{ STRATEGY_HINTS[s] }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="tbl-scroll">
+        <table class="grid">
+          <thead>
+            <tr><th style="width: 52px">策略</th><th style="width: 130px">名称</th><th>几何特征</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in [0, 1, 2, 3, 4, 5]" :key="s">
+              <td class="num">{{ s }}</td>
+              <td>{{ STRATEGY_NAMES[s] }}</td>
+              <td>{{ STRATEGY_HINTS[s] }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p class="tip">
         策略 3「满舱主块」是装载率最高的基准实现，混装时通常也是首选。
         混装场景下不同策略差异很大，拿不准时在 0~5 上各跑一遍比较即可。
       </p>
 
       <h4>高级选项</h4>
-      <table class="grid">
-        <thead>
-          <tr><th style="width: 130px">选项</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>允许旋转</td><td>关闭后仅允许原方向 dir0，通常装载率大幅下降</td></tr>
-          <tr><td>堆码级别约束</td><td>限制"只能压在承托级别 ≥ 自己的货物上"</td></tr>
-          <tr><td>承托比例约束</td><td>限制箱底实际接触面积占箱底面积的下限，防"半悬空"</td></tr>
-          <tr><td>候选块上限</td><td>限制每次枚举的候选块数量。调小换速度，调大找更优解</td></tr>
-          <tr><td>最大迭代轮数</td><td>贪心主循环上限。默认足够，调大极少有用</td></tr>
-        </tbody>
-      </table>
+      <div class="tbl-scroll">
+        <table class="grid">
+          <thead>
+            <tr><th style="width: 130px">选项</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>允许旋转</td><td>关闭后仅允许原方向 dir0，通常装载率大幅下降</td></tr>
+            <tr><td>堆码级别约束</td><td>限制"只能压在承托级别 ≥ 自己的货物上"</td></tr>
+            <tr><td>承托比例约束</td><td>限制箱底实际接触面积占箱底面积的下限，防"半悬空"</td></tr>
+            <tr><td>候选块上限</td><td>限制每次枚举的候选块数量。调小换速度，调大找更优解</td></tr>
+            <tr><td>最大迭代轮数</td><td>贪心主循环上限。默认足够，调大极少有用</td></tr>
+          </tbody>
+        </table>
+      </div>
       <p class="tip">
         关闭约束开关后算法会忽略堆码 / 承托限制，结果更快但<strong>可能不符合物理摆放要求</strong>，
         只适合做对比试验，不要拿来出单。
@@ -162,17 +168,19 @@
       </ul>
 
       <h3 class="sec">五、导出</h3>
-      <table class="grid">
-        <thead>
-          <tr><th style="width: 130px">导出</th><th style="width: 80px">格式</th><th>内容</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>装柜报表</td><td>PDF</td><td>基本信息 / 汇总指标 / 装入清单 / 3D 示意图 / 分层明细 / 未装清单</td></tr>
-          <tr><td>装柜步骤单</td><td>PDF</td><td>逐条摆放顺序 + 完整坐标区间 + 累计装载率 + 签字栏</td></tr>
-          <tr><td>逐箱坐标</td><td>CSV</td><td>每行一箱，含单箱尺寸与姿态</td></tr>
-          <tr><td>3D 画面</td><td>PNG</td><td>3D 面板内导出</td></tr>
-        </tbody>
-      </table>
+      <div class="tbl-scroll">
+        <table class="grid">
+          <thead>
+            <tr><th style="width: 130px">导出</th><th style="width: 80px">格式</th><th>内容</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>装柜报表</td><td>PDF</td><td>基本信息 / 汇总指标 / 装入清单 / 3D 示意图 / 分层明细 / 未装清单</td></tr>
+            <tr><td>装柜步骤单</td><td>PDF</td><td>逐条摆放顺序 + 完整坐标区间 + 累计装载率 + 签字栏</td></tr>
+            <tr><td>逐箱坐标</td><td>CSV</td><td>每行一箱，含单箱尺寸与姿态</td></tr>
+            <tr><td>3D 画面</td><td>PNG</td><td>3D 面板内导出</td></tr>
+          </tbody>
+        </table>
+      </div>
       <el-alert
         class="mt12"
         type="info"
@@ -239,6 +247,47 @@ function fmtTime(iso: string | null): string {
   max-width: 1000px;
   margin: 0 auto;
   padding: 12px;
+}
+
+/* ───────────── 窄屏适配 ─────────────
+ * 这页是长文档 + 宽表格。手机上不做重排（重排一张 8 列的报表毫无意义），
+ * 而是让表格**横向滚动**、标题与列表正常换行，保证可读。
+ */
+@media (max-width: 991px) {
+  .ver-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ver-num {
+    font-size: 32px;
+  }
+  .ver-right {
+    padding-top: 0;
+  }
+  .about-page :deep(.el-card__body) {
+    padding: 12px;
+  }
+  h3.sec {
+    font-size: 14px;
+  }
+  ul,
+  ol.manual {
+    padding-left: 18px;
+    font-size: 12.5px;
+    line-height: 1.9;
+  }
+  /* 表格外层横向滚动；table 设 min-width 是让它"必须"比容器宽，从而触发滚动 */
+  .tbl-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    min-width: 560px;
+    font-size: 12px;
+  }
+  tbody th {
+    width: auto;
+  }
 }
 
 /* ── 版本卡 ── */

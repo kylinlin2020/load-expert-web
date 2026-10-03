@@ -112,6 +112,10 @@ const raycaster = new THREE.Raycaster();
 const pointerNdc = new THREE.Vector2();
 let frameId = 0;
 let resizeHandler: (() => void) | null = null;
+let resizeObserver: ResizeObserver | null = null;
+/** 上一次生效的画布尺寸，用于跳过无意义的重算（见 resizeHandler 内注释） */
+let lastW = 0;
+let lastH = 0;
 let clickHandler: ((e: MouseEvent) => void) | null = null;
 let defaultCameraPos = new THREE.Vector3(3000, 3500, 4000);
 
@@ -1089,17 +1093,36 @@ function init(): void {
     const w = el.clientWidth;
     const h = el.clientHeight;
     if (w === 0 || h === 0) return;
+    // 尺寸没变就别动相机：fitCameraToBox 会重置用户已经调好的视角，
+    // 而 ResizeObserver 在某些布局变化里会重复触发，白白把用户的视角打回默认。
+    if (w === lastW && h === lastH) return;
+    lastW = w;
+    lastH = h;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
     // 视口比例变化后按新 aspect 重新拟合，避免裁切
     fitCameraToBox();
   };
+
+  /**
+   * 监听**面板自身**尺寸变化，而不只是 window resize
+   *
+   * 侧边栏收成抽屉、el-col 的 :md 断点折叠、卡片换行 ——
+   * 这些都会改变画布尺寸但**不触发 window resize**，于是 camera.aspect 与
+   * 画布分辨率就与实际显示尺寸对不上（表现为画面被拉伸或内容溢出）。
+   */
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => resizeHandler?.());
+    resizeObserver.observe(el);
+  }
   window.addEventListener('resize', resizeHandler);
 }
 
 function dispose(): void {
   cancelAnimationFrame(frameId);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   if (resizeHandler) {
     window.removeEventListener('resize', resizeHandler);
     resizeHandler = null;
@@ -1394,5 +1417,69 @@ onDeactivated(() => {
 .hover-row span:last-child {
   color: #303133;
   font-variant-numeric: tabular-nums;
+}
+
+/* ───────────── 窄屏：控制条从"浮在画布上"改为"排在画布下方" ─────────────
+ *
+ * ## 为什么要这么改
+ *
+ * 统计条 / 工具栏 / 图例 / 提示这四块原本都是 `position: absolute` 浮在 wrap 里的，
+ * 工具栏在窄屏还会折成 2~3 行。第一版只是把 wrap 从 520px 压到 260px，
+ * 结果**画布几乎看不见了** —— 260px 里被浮层吃掉大半，柜体只剩一条细缝。
+ *
+ * 窄屏改成 flex 纵向流：画布固定高占满，控制条按 DOM 顺序排到下面。
+ * 既保证模型有完整的显示区域，控制条也能拿到整行宽度（不再折行），手指点按钮也更准。
+ * hover 提示（.packing3d-hover）保持绝对定位 —— 它要跟着鼠标走。
+ *
+ * ## 这段必须放在样式块的**最后**（同一个坑踩了两次）
+ *
+ * 媒体查询只是"条件成立时提高优先级"，**并不会自动排到基础规则后面**。
+ * 同优先级下按源码顺序后者胜，所以：
+ *   - 放在 `.packing3d-canvas { height: 100% }` 前面 → 画布高度算成 **0px**
+ *     （父级此时 height:auto，100% 无参照）
+ *   - 放在 `.packing3d-toolbar { position: absolute }` 前面 → 工具栏仍浮着
+ * 两次都是靠 inspect 读计算样式才发现，肉眼看截图只会觉得"怎么还是老样子"。
+ */
+@media (max-width: 991px) {
+  .packing3d-wrap {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+  }
+  .packing3d-canvas {
+    order: 1;
+    flex: none;
+    height: 300px;
+  }
+  .packing3d-stats {
+    order: 2;
+    position: static;
+    margin: 8px 8px 0;
+    border-radius: 0 0 6px 6px;
+  }
+  .packing3d-toolbar {
+    order: 3;
+    position: static;
+    margin: 8px;
+    flex-wrap: wrap;
+    border-radius: 4px;
+  }
+  .packing3d-legend {
+    order: 4;
+    position: static;
+    margin: 0 8px 8px;
+    max-height: none;
+  }
+  .packing3d-tips {
+    order: 5;
+    position: static;
+    margin: 0 8px 8px;
+    text-align: center;
+  }
+}
+@media (max-width: 480px) {
+  .packing3d-canvas {
+    height: 240px;
+  }
 }
 </style>
