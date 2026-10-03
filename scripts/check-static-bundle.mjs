@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
  *
  * ## 为什么不写死路径
  *
- * 写死 `D:/output/load-expert-web` 在本机能跑，**换到 GitHub Actions（Linux）立刻失败** ——
+ * 写死某个开发机的绝对路径在本机能跑，**换到 GitHub Actions（Linux）立刻失败** ——
  * 而这个脚本恰恰最该在 CI 里跑（它守的正是"静态产物能不能独立部署"）。
  * 往上找 package.json 则与 cwd、编译输出布局、操作系统都无关。
  */
