@@ -56,6 +56,37 @@ const pkgText = readFileSync(join(root, 'package.json'), 'utf8').replace(/^﻿/,
 const pkg = JSON.parse(pkgText);
 const [baseMajor, baseMinor] = String(pkg.version ?? '0.1.0').split('.');
 
+/** 本脚本自己产出的文件（相对仓库根，正斜杠） */
+const SELF_PATH = 'src/version.ts';
+
+/**
+ * 工作区是否有未提交的**源码**改动
+ *
+ * 刻意把 `src/version.ts` 排除掉，否则会形成反馈死循环：
+ * 本文件里存了 `builtAt` 构建时间戳，**每跑一次构建内容都变**
+ * → 构建把 version.ts 改掉 → 工作区变脏 → 下次构建报 dirty=true
+ * → 于是"有未提交改动"这个警告会永远亮着，而实际上源码一行没改。
+ * 那个警告一旦变成常亮的噪音，就等于没有警告了。
+ *
+ * 注意：本函数与 SELF_PATH 必须声明在调用点之前 ——
+ * `const` 有暂时性死区，定义在后面会在调用时抛 ReferenceError。
+ */
+function hasUncommittedSource() {
+  const raw = git(['status', '--porcelain']);
+  if (raw === null) return false;
+  const changed = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    // porcelain 每行是 "XY PATH"；重命名行是 "R  old -> new"，取后者
+    .map((line) => {
+      const arrow = line.split('->').pop().trim();
+      return (arrow.startsWith('"') ? arrow.slice(1, -1) : arrow).replace(/\\/g, '/');
+    })
+    .filter((p) => p !== SELF_PATH);
+  return changed.length > 0;
+}
+
 const head = git(['rev-parse', 'HEAD']);
 let version;
 let source;
@@ -74,7 +105,7 @@ if (head) {
     commitDate = git(['log', '-1', '--format=%cI']);
     // 有未提交改动要**显式告诉使用者**：页面上显示的版本号对应的其实是
     // 上一次提交的状态，代码可能已经变了 —— 不标注就是误导。
-    dirty = (git(['status', '--porcelain']) ?? '') !== '';
+    dirty = hasUncommittedSource();
   }
 }
 
