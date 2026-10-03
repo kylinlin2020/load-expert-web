@@ -1,0 +1,129 @@
+/**
+ * 生成版本信息 → src/version.ts
+ *
+ * ## 版本号规则：0.1.N，N = git 提交数
+ *
+ * 用户要求「版本号按 0.1.0 开始，按 GIT 迭代自增」。落地为：
+ *
+ *   主版本.次版本.修订号  =  package.json 的主.次 + git 提交总数
+ *   例：提交 1 次 → 0.1.1，提交 57 次 → 0.1.57
+ *
+ * 为什么用提交数当修订号，而不是让人手改：
+ * - **不会忘记**。手改版本号的必然结果是"改代码忘了改版本"，于是页面上
+ *   显示 0.1.0 的东西其实是第 30 次迭代，没人看得出。
+ * - 提交数天然单调递增，能直接当"这是第几版"用。
+ * - 想手动控制节奏就 `git tag`，本脚本只读提交数，不需要额外的 tag 约定。
+ *
+ * ## 为什么生成成文件，而不是运行时读 git
+ *
+ * 部署时目录里通常**没有 .git**（只发 dist/ 和源码包）。若运行时去 shell 调 git，
+ * 生产环境会静默退化成"版本未知"。所以：
+ * - 构建/启动前跑本脚本，把结果**固化**进 src/version.ts
+ * - 前端直接 import 它，不依赖 .git 存在
+ * - 生成的 src/version.ts **入库**（不 ignore）：这样即使在无 git 的源码包里
+ *   直接构建，也有可读的版本号，而不是崩掉
+ *
+ * ## 无 git 时怎么办
+ *
+ * 非 git 仓库（刚拿到一份源码、或临时解包）退回 package.json 的版本号，
+ * 并把 `source` 标成 'package.json'，页面会**如实显示"未初始化 git"**，
+ * 而不是假装它是个有版本管理的构建。
+ */
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** 跑一条 git 命令；任何异常（非仓库、git 未安装、命令失败）都返回 null，不抛 */
+function git(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 10_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+// 去掉可能的 BOM：PowerShell 的 `Out-File -Encoding utf8` / 某些编辑器会写 BOM，
+// 而 JSON.parse 见到 BOM 直接抛 SyntaxError，报错信息还指向 package.json，很难查
+const pkgText = readFileSync(join(root, 'package.json'), 'utf8').replace(/^﻿/, '');
+const pkg = JSON.parse(pkgText);
+const [baseMajor, baseMinor] = String(pkg.version ?? '0.1.0').split('.');
+
+const head = git(['rev-parse', 'HEAD']);
+let version;
+let source;
+let commit = null;
+let commitShort = null;
+let commitDate = null;
+let dirty = null;
+
+if (head) {
+  const count = Number(git(['rev-list', '--count', 'HEAD']) ?? '0');
+  if (Number.isFinite(count)) {
+    version = `${baseMajor}.${baseMinor}.${count}`;
+    source = 'git';
+    commit = count;
+    commitShort = head.slice(0, 7);
+    commitDate = git(['log', '-1', '--format=%cI']);
+    // 有未提交改动要**显式告诉使用者**：页面上显示的版本号对应的其实是
+    // 上一次提交的状态，代码可能已经变了 —— 不标注就是误导。
+    dirty = (git(['status', '--porcelain']) ?? '') !== '';
+  }
+}
+
+if (!version) {
+  version = `${baseMajor}.${baseMinor}.0`;
+  source = 'package.json';
+}
+
+const info = {
+  version,
+  source,
+  commit,
+  commitShort,
+  commitDate,
+  dirty,
+  builtAt: new Date().toISOString(),
+};
+
+// 写成 TS 而不是 JSON：直接 import 就有类型，且不用配 resolveJsonModule
+const out = `/**
+ * 版本信息 —— **本文件由 scripts/gen-version.mjs 自动生成，请勿手改**
+ *
+ * 重新生成：\`npm run genversion\`（build / dev / server 都会自动先跑一遍）
+ * 版本规则：0.1.N，N = git 提交数。详见 scripts/gen-version.mjs 的注释。
+ */
+export interface AppVersion {
+  /** 完整版本号，如 0.1.12 */
+  version: string;
+  /** 版本号来源：git = 由提交数推算；package.json = 无 git 时的回退 */
+  source: 'git' | 'package.json';
+  /** git 提交总数（无 git 时为 null） */
+  commit: number | null;
+  /** 短提交号，如 3bf6c75 */
+  commitShort: string | null;
+  /** 最后一次提交时间（ISO 8601） */
+  commitDate: string | null;
+  /** 构建时工作区是否有未提交改动；true 表示页上版本号对应的其实是上一次提交 */
+  dirty: boolean | null;
+  /** 本次构建时间（ISO 8601） */
+  builtAt: string;
+}
+
+export const appVersion: AppVersion = ${JSON.stringify(info, null, 2)};
+
+export default appVersion;
+`;
+
+writeFileSync(join(root, 'src', 'version.ts'), out, 'utf8');
+console.log(
+  `[gen-version] ${info.version}  来源=${info.source}` +
+    (info.commitShort ? `  提交=${info.commitShort}${info.dirty ? '(有未提交改动)' : ''}` : '  (未初始化 git)'),
+);

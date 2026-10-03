@@ -22,12 +22,24 @@
           <el-icon><List /></el-icon>
           <span>方案列表</span>
         </el-menu-item>
+        <el-menu-item index="/about">
+          <el-icon><InfoFilled /></el-icon>
+          <span>应用版本</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
     <el-container>
       <el-header class="app-header">
         <span class="header-title">{{ $route.meta.title || '' }}</span>
+        <!--
+          版本号常驻顶栏：报问题时第一句往往是"我是哪个版本"，
+          让人自己翻到「应用版本」页去抄编号太费事。
+          工作区有未提交改动时标黄 —— 那个版本号对应的其实是上一次提交。
+        -->
+        <span class="header-ver" :class="{ 'is-dirty': appVersion.dirty }" @click="router.push('/about')">
+          v{{ appVersion.version }}<template v-if="appVersion.dirty"> *</template>
+        </span>
       </el-header>
       <el-main class="app-main">
         <router-view />
@@ -37,7 +49,11 @@
 </template>
 
 <script setup lang="ts">
-import { Box, Van, Cpu, List } from '@element-plus/icons-vue';
+import { useRouter } from 'vue-router';
+import { Box, Van, Cpu, List, InfoFilled } from '@element-plus/icons-vue';
+import { appVersion } from '../version';
+
+const router = useRouter();
 </script>
 
 <style scoped>
@@ -91,6 +107,25 @@ import { Box, Van, Cpu, List } from '@element-plus/icons-vue';
   font-size: 16px;
   font-weight: 600;
   color: #303133;
+}
+.header-ver {
+  margin-left: auto;
+  font-size: 12px;
+  color: #909399;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.header-ver:hover {
+  background: #f5f7fa;
+  color: #409eff;
+}
+/* 未提交改动：版本号对应的其实是上一次提交，必须一眼看出来 */
+.header-ver.is-dirty {
+  color: #e6a23c;
+  font-weight: 600;
 }
 .app-main {
   background: #f5f7fa;
