@@ -1,14 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 0213f7a948958e9a27cc5f440436ac23_52d9788abd9b11f18019525400248c00
-    ReservedCode1: KJpvPezV6uyz6E3BYFRMDA7NZMSBdGfAmld8/Ys8qwecPFdh++/23xZK54Yh0xn4osRp9DFqVcEghYZFCQ+g5o6e/7kKmFDXmIVyC58mVjl/nduSDWDyyF/N9NURwbm7Zp/kGpobQy1cU1Y+FIBcx/K/wsiGMrRL4qMYa+peIslLkb7m895edL4J2QA=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 0213f7a948958e9a27cc5f440436ac23_52d9788abd9b11f18019525400248c00
-    ReservedCode2: KJpvPezV6uyz6E3BYFRMDA7NZMSBdGfAmld8/Ys8qwecPFdh++/23xZK54Yh0xn4osRp9DFqVcEghYZFCQ+g5o6e/7kKmFDXmIVyC58mVjl/nduSDWDyyF/N9NURwbm7Zp/kGpobQy1cU1Y+FIBcx/K/wsiGMrRL4qMYa+peIslLkb7m895edL4J2QA=
----
-
 # 装柜专家 LoadExpert（Web 版）
 
 基于 Vue3 + TypeScript 全栈重构的现代装柜计算软件，功能对齐原 Windows 版 LoadExpert：**货物管理、柜型管理、装柜计算、3D 结果展示、历史方案**。
