@@ -76,12 +76,16 @@ function hasUncommittedSource() {
   if (raw === null) return false;
   const changed = raw
     .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    // porcelain 每行是 "XY PATH"；重命名行是 "R  old -> new"，取后者
+    .filter((line) => line.trim() !== '')
+    // porcelain 每行固定是 "XY PATH"：XY 是两个状态字符 + 一个空格，共 3 字符。
+    // 只能从**行首** slice(3)，不能先 trim —— 未暂存改动是 " M path"，
+    // trim 掉前导空格后就变成 "M path"，再 slice(3) 会砍掉路径头几个字母。
     .map((line) => {
-      const arrow = line.split('->').pop().trim();
-      return (arrow.startsWith('"') ? arrow.slice(1, -1) : arrow).replace(/\\/g, '/');
+      const rest = line.slice(3);
+      // 重命名行是 "R  old -> new"，路径取 new
+      const p = rest.includes('->') ? rest.split('->').pop().trim() : rest;
+      // git 会给含特殊字符的路径加引号
+      return (p.startsWith('"') ? p.slice(1, -1) : p).replace(/\\/g, '/');
     })
     .filter((p) => p !== SELF_PATH);
   return changed.length > 0;
