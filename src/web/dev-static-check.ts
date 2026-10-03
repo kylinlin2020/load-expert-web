@@ -99,6 +99,20 @@ async function run(): Promise<void> {
     const back = await api.getPlan(saved.id);
     p(`方案往返：id=${back.id} 件数=${back.result.pieces}（应为 ${r.pieces}） 名称=${back.name}`);
     await api.deletePlan(saved.id);
+
+    // ⚠️ 柜型尺寸编辑（用户曾在 GitHub Pages 上报障：保存提示成功但数值不变）
+    // 这条必须在**真实浏览器**里跑，因为它是"表单载荷字段名对不对"的问题，
+    // 而 Node 侧测的是同一段逻辑；两处都覆盖才不留缺口。
+    p(`建柜型：内长 ${c.innerLength}（应为 11900）`);
+    const changed = await api.updateContainer(c.id, { innerLength: 12000 });
+    p(`改内长为 12000 -> ${changed.innerLength}（应为 12000）`);
+    const reread = await api.listContainers();
+    p(`列表复查：${reread.find((x) => x.id === c.id)?.innerLength}（应为 12000）`);
+    p(
+      changed.innerLength === 12000 && reread.find((x) => x.id === c.id)?.innerLength === 12000
+        ? '=== 通过：柜型尺寸可修改并已持久化 ==='
+        : '=== 失败：柜型尺寸改不动（表单载荷字段名问题）===',
+    );
   } finally {
     // 无论成败都清掉，避免污染冒烟验证用户的 IndexedDB
     await api.deleteBox(b1.id);

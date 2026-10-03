@@ -19,7 +19,6 @@ import {
   updateBox,
   updateContainer,
   type NewBox,
-  type NewContainer,
 } from './db.js';
 import {
   exportBackup as applyExport,
@@ -60,24 +59,13 @@ function toNewBox(b: Box): NewBox {
   };
 }
 
-function toNewContainer(c: Container): NewContainer {
-  return {
-    name: c.name,
-    length: c.innerLength,
-    width: c.innerWidth,
-    height: c.innerHeight,
-    weightCapacity: c.weightCapacity,
-    label: c.label,
-    description: c.description,
-    cornerDims: c.cornerDims,
-    doorDims: c.doorDims,
-    emptyWeight: c.emptyWeight,
-    cost: c.cost,
-    unit: c.unit,
-    dimensionUnit: c.dimensionUnit ?? 'mm',
-    weightUnit: c.weightUnit ?? 'kg',
-  };
-}
+/**
+ * 这里曾经有一个 `toNewContainer()`，把 `Container` 的领域名转成 SQLite 列名。
+ *
+ * 现在 `NewContainer` 已经改用领域名（见 db.ts 里的说明），那个映射就退化成了恒等转换，
+ * 于是**删掉** —— 少一处需要维护、也就少一处可能与主数据层漂移的地方。
+ * `dimensionUnit` / `weightUnit` 的缺省值由 `containerVals()` 负责。
+ */
 
 /** SQLite → 备份适配器 */
 export function sqliteBackupAdapter(db: DatabaseSync): BackupStoreAdapter {
@@ -98,9 +86,8 @@ export function sqliteBackupAdapter(db: DatabaseSync): BackupStoreAdapter {
 
     async putContainer(container: Container) {
       const id = Number(container.id);
-      const nc = toNewContainer(container);
-      if (getContainer(db, id)) updateContainer(db, id, nc);
-      else insertContainerWithId(db, id, nc);
+      if (getContainer(db, id)) updateContainer(db, id, container);
+      else insertContainerWithId(db, id, container);
     },
 
     async putPlan(plan) {

@@ -150,6 +150,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import api from '../api/client';
+import { defaultContainerForm, containerFormToPayload, containerToForm } from '../lib/containerForm';
 import type { Container } from '../../types';
 
 const containers = ref<Container[]>([]);
@@ -176,49 +177,19 @@ const form = reactive({
   unit: '',
 });
 
-/** 表单默认值（新建/重置用） */
+/** 表单默认值（新建/重置用）—— 实现见 lib/containerForm.ts */
 function defaultForm() {
-  return {
-    name: '',
-    label: '',
-    description: '',
-    length: 5898,
-    width: 2352,
-    height: 2393,
-    weightCapacity: 21770,
-    dimensionUnit: 'mm',
-    weightUnit: 'kg',
-    cornerLength: 0,
-    cornerWidth: 0,
-    cornerHeight: 0,
-    doorWidth: 0,
-    doorHeight: 0,
-    emptyWeight: 0,
-    cost: 0,
-    unit: '',
-  };
+  return defaultContainerForm();
 }
 
-/** 表单 → API payload（角件/门尺寸为三元组/二元组） */
-function toPayload(f: ReturnType<typeof defaultForm>) {
-  const hasCorner = f.cornerLength > 0 || f.cornerWidth > 0 || f.cornerHeight > 0;
-  const hasDoor = f.doorWidth > 0 || f.doorHeight > 0;
-  return {
-    name: f.name.trim(),
-    label: f.label.trim() || undefined,
-    description: f.description.trim() || undefined,
-    length: f.length,
-    width: f.width,
-    height: f.height,
-    weightCapacity: f.weightCapacity,
-    dimensionUnit: f.dimensionUnit,
-    weightUnit: f.weightUnit,
-    cornerDims: hasCorner ? ([f.cornerLength, f.cornerWidth, f.cornerHeight] as [number, number, number]) : undefined,
-    doorDims: hasDoor ? ([f.doorWidth, f.doorHeight] as [number, number]) : undefined,
-    emptyWeight: f.emptyWeight,
-    cost: f.cost,
-    unit: f.unit.trim() || undefined,
-  };
+/**
+ * 表单 → API payload
+ *
+ * 实现已抽到 `lib/containerForm.ts`，因为它曾在这里藏过一个**两边互相抵消**的 bug
+ * （表单发 SQLite 列名、服务端数据层也收列名，于是静态版失效）。详细说明见那个文件。
+ */
+function toPayload(f: ReturnType<typeof defaultForm>): Partial<Container> {
+  return containerFormToPayload(f);
 }
 
 async function refresh() {
@@ -240,25 +211,7 @@ function openCreate() {
 
 function openEdit(row: Container) {
   editing.value = row;
-  Object.assign(form, defaultForm(), {
-    name: row.name,
-    label: row.label ?? '',
-    description: row.description ?? '',
-    length: row.innerLength,
-    width: row.innerWidth,
-    height: row.innerHeight,
-    weightCapacity: row.weightCapacity,
-    dimensionUnit: row.dimensionUnit ?? 'mm',
-    weightUnit: row.weightUnit ?? 'kg',
-    cornerLength: row.cornerDims?.[0] ?? 0,
-    cornerWidth: row.cornerDims?.[1] ?? 0,
-    cornerHeight: row.cornerDims?.[2] ?? 0,
-    doorWidth: row.doorDims?.[0] ?? 0,
-    doorHeight: row.doorDims?.[1] ?? 0,
-    emptyWeight: row.emptyWeight ?? 0,
-    cost: row.cost ?? 0,
-    unit: row.unit ?? '',
-  });
+  Object.assign(form, containerToForm(row));
   dialogVisible.value = true;
 }
 

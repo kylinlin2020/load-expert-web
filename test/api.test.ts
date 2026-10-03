@@ -89,9 +89,9 @@ test('PUT 只带部分字段时，未提供的数值字段不被清零', async (
   // 症状：PUT /api/containers/4 {"cost":2800} 会把该柜型的内长/内宽/内高/载重全部清零。
   const created = await inject('POST', '/api/containers', {
     name: '部分更新回归柜',
-    length: 13556,
-    width: 2352,
-    height: 2698,
+    innerLength: 13556,
+    innerWidth: 2352,
+    innerHeight: 2698,
     weightCapacity: 27600,
     label: 'REGRESS',
   });
@@ -198,9 +198,9 @@ test('货物六向与型变字段可写可读（数组原样往返）', async ()
 test('柜型结构与商务字段可写可读（角件/门/自重/成本/单位）', async () => {
   const created = await inject('POST', '/api/containers', {
     name: '结构字段柜',
-    length: 13556,
-    width: 2352,
-    height: 2698,
+    innerLength: 13556,
+    innerWidth: 2352,
+    innerHeight: 2698,
     weightCapacity: 27600,
     label: '45HQ',
     description: '45 尺高柜',
@@ -240,9 +240,9 @@ test('柜型种子数据存在 20GP/40GP/40HQ 且可 CRUD', async () => {
 
   const created = await inject('POST', '/api/containers', {
     name: '45 尺高柜',
-    length: 13556,
-    width: 2352,
-    height: 2698,
+    innerLength: 13556,
+    innerWidth: 2352,
+    innerHeight: 2698,
     weightCapacity: 30000,
     label: '45HQ',
   });

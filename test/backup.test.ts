@@ -209,7 +209,8 @@ test('校验：缺省的可选字段按默认值补齐（老备份 / 手工精�
 /** 往库里造一份"有方案、方案里有 boxId 引用"的完整数据 */
 function seedSqlite(db: ReturnType<typeof openDatabase>): void {
   const c = insertContainer(db, {
-    name: '40HQ 实际柜', length: 11900, width: 2340, height: 2680,
+    // 领域字段名（不是 SQLite 列名）—— 见 db.ts 的 NewContainer 注释
+    name: '40HQ 实际柜', innerLength: 11900, innerWidth: 2340, innerHeight: 2680,
     weightCapacity: 26800, label: '40HQ', cornerDims: [100, 100, 100], doorDims: [2340, 2680],
     emptyWeight: 4000, cost: 3000,
   });

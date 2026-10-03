@@ -230,11 +230,26 @@ export interface NewBox {
   pcsCount?: number;
 }
 
+/**
+ * 柜型写入参数 —— **用领域字段名**，与 `Container` / `ApiShape` 一致
+ *
+ * ## 为什么不用 SQLite 列名（length/width/height）
+ *
+ * 之前这里用的是列名，于是「服务端数据层收列名、视图层也发列名」，
+ * 两处错误互相抵消，看起来一直没问题。但 `ApiShape` 声明的是
+ * `Partial<Container>`（领域名 `innerLength/…`），静态版按声明实现就暴露了：
+ *   - 改尺寸静默失效（`c.innerLength` 为 undefined → 回退旧值）
+ *   - 新建柜型尺寸全是 0（`c.innerLength ?? 0`）
+ * 用户在 GitHub Pages 上实测报障才发现。
+ *
+ * 所以**以接口声明为准**：视图与两个数据层统一用领域名，
+ * 列名只出现在 `containerVals()` 内部。
+ */
 export interface NewContainer {
   name: string;
-  length: number;
-  width: number;
-  height: number;
+  innerLength: number;
+  innerWidth: number;
+  innerHeight: number;
   weightCapacity?: number;
   label?: string;
   description?: string;
@@ -428,7 +443,12 @@ export function getContainer(db: DatabaseSync, id: number): Container | null {
   return row ? rowToContainer(row) : null;
 }
 
-/** 柜型表的列顺序（insertContainer / 备份恢复共用） */
+/**
+ * 柜型表的列顺序（insertContainer / 备份恢复共用）
+ *
+ * 这是**列名（length/width/height）唯一应该出现的地方** ——
+ * 领域名到列名的映射收敛在这里，其余代码一律用 innerLength/innerWidth/innerHeight。
+ */
 const CONTAINER_COLS = [
   'name', 'length', 'width', 'height', 'weight_capacity', 'label', 'description',
   'corner_dims', 'door_dims', 'empty_weight', 'cost', 'unit', 'dimension_unit', 'weight_unit',
@@ -437,9 +457,9 @@ const CONTAINER_COLS = [
 function containerVals(c: NewContainer): unknown[] {
   return [
     c.name,
-    c.length,
-    c.width,
-    c.height,
+    c.innerLength,
+    c.innerWidth,
+    c.innerHeight,
     c.weightCapacity ?? 0,
     c.label ?? null,
     c.description ?? null,
@@ -469,9 +489,9 @@ export function updateContainer(db: DatabaseSync, id: number, c: Partial<NewCont
   }
   const next: NewContainer = {
     name: c.name ?? cur.name,
-    length: c.length ?? cur.innerLength,
-    width: c.width ?? cur.innerWidth,
-    height: c.height ?? cur.innerHeight,
+    innerLength: c.innerLength ?? cur.innerLength,
+    innerWidth: c.innerWidth ?? cur.innerWidth,
+    innerHeight: c.innerHeight ?? cur.innerHeight,
     weightCapacity: c.weightCapacity ?? cur.weightCapacity,
     label: c.label !== undefined ? c.label : cur.label,
     description: c.description !== undefined ? c.description : cur.description,
@@ -488,9 +508,11 @@ export function updateContainer(db: DatabaseSync, id: number, c: Partial<NewCont
                            corner_dims=?, door_dims=?, empty_weight=?, cost=?, unit=?, dimension_unit=?, weight_unit=? WHERE id=?`,
   ).run(
     next.name,
-    next.length,
-    next.width,
-    next.height,
+    // 这里出现列名是正确的 —— SQL 的 SET 子句用的就是列名，
+    // 上面的 next 用领域名，两者由这一段负责对应
+    next.innerLength,
+    next.innerWidth,
+    next.innerHeight,
     next.weightCapacity ?? 0,
     next.label ?? null,
     next.description ?? null,

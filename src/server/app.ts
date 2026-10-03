@@ -212,15 +212,17 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
   });
 
   app.post('/api/containers', async (request, reply) => {
+    // 领域字段名（innerLength/…），与 `ApiShape` 声明一致。
+    // 见 db.ts 的 NewContainer 注释：为什么这里不用 SQLite 列名。
     const c = request.body as Partial<NewContainer>;
-    if (!c || typeof c.name !== 'string' || !c.name.trim() || !Number.isFinite(numId(c.length)) || !Number.isFinite(numId(c.width)) || !Number.isFinite(numId(c.height))) {
-      return reply.status(400).send({ error: 'name/length/width/height are required' });
+    if (!c || typeof c.name !== 'string' || !c.name.trim() || !Number.isFinite(numId(c.innerLength)) || !Number.isFinite(numId(c.innerWidth)) || !Number.isFinite(numId(c.innerHeight))) {
+      return reply.status(400).send({ error: 'name/innerLength/innerWidth/innerHeight are required' });
     }
     const container = insertContainer(db, {
       name: c.name.trim(),
-      length: numId(c.length),
-      width: numId(c.width),
-      height: numId(c.height),
+      innerLength: numId(c.innerLength),
+      innerWidth: numId(c.innerWidth),
+      innerHeight: numId(c.innerHeight),
       weightCapacity: numId(c.weightCapacity),
       label: c.label,
       description: typeof c.description === 'string' ? c.description.trim() || undefined : undefined,
@@ -240,9 +242,9 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     const c = request.body as Partial<NewContainer>;
     const updated = updateContainer(db, id, {
       name: c?.name,
-      length: numIdOpt(c?.length),
-      width: numIdOpt(c?.width),
-      height: numIdOpt(c?.height),
+      innerLength: numIdOpt(c?.innerLength),
+      innerWidth: numIdOpt(c?.innerWidth),
+      innerHeight: numIdOpt(c?.innerHeight),
       weightCapacity: numIdOpt(c?.weightCapacity),
       label: c ? c.label : undefined,
       description: c ? (typeof c.description === 'string' ? c.description.trim() || undefined : undefined) : undefined,
