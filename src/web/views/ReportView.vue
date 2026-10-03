@@ -212,6 +212,13 @@
 /**
  * 装柜报表 / 装柜步骤单 —— **打印与「另存为 PDF」页面**
  *
+ * ## 为什么显式命名
+ *
+ * App.vue 的 `<KeepAlive :exclude="['ReportView']">` 按**组件名**排除，
+ * 而 `<script setup>` 的组件默认是文件推导名、不保证稳定。
+ * 这里 `defineOptions` 显式声明，KeepAlive 的排除规则才不会失效
+ * （失效的后果是：本页用完返回后，3D 场景与截图一直被缓存占着显存）。
+ *
  * ## 为什么用「打印 → 另存为 PDF」而不是前端 PDF 库
  *
  * 试过 jsPDF：PDF 规范没有内置中文字体，jsPDF 要显示中文必须**内嵌一份 CJK 字体**
@@ -228,7 +235,7 @@
  * 若后续确实需要"点一下就下载 .pdf"，可以再加 html2canvas + 手写最小 PDF 的栅格化方案，
  * 代价是文字不可选。
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, defineOptions, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import Packing3D from '../components/Packing3D.vue';
@@ -319,6 +326,9 @@ function goBack() {
   clearPlanDoc();
   router.push('/calculate');
 }
+
+// KeepAlive 按组件名排除本页（见文件头说明），必须显式声明名字
+defineOptions({ name: 'ReportView' });
 
 /**
  * 从屏幕上的 3D 面板抓一张图存进 `shot`（打印时用）

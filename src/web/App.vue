@@ -42,7 +42,23 @@
         </span>
       </el-header>
       <el-main class="app-main">
-        <router-view />
+        <!--
+          KeepAlive：切换菜单时**不销毁**页面组件，切回来时表单与计算结果原样保留。
+
+          为什么必须：路由组件默认在离开时被 unmount，所有局部状态（柜型选择、
+          已选货物与数量、策略、计算结果、门位置约定）全部丢失 —— 用户反馈的
+          "切换菜单再切回来要重新选一遍重新算" 就是这个原因。
+          把状态搬到全局 store 也能解决，但要动几十处引用；
+          KeepAlive 是 Vue 官方的做法，一处改动解决所有页面。
+
+          exclude 掉 ReportView：它是"用完即走"的单据页，
+          且挂着整套 3D 场景（WebGL 上下文很吃内存），缓存起来没有收益。
+        -->
+        <router-view v-slot="{ Component }">
+          <KeepAlive :exclude="['ReportView']">
+            <component :is="Component" />
+          </KeepAlive>
+        </router-view>
       </el-main>
     </el-container>
   </el-container>

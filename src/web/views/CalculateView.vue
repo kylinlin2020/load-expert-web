@@ -542,7 +542,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 import api, { type PlanRecord } from '../api/client';
@@ -967,6 +967,14 @@ function on3DSelect(boxId: string) {
   loadTableRef.value?.setCurrentRow(target);
 }
 
+/**
+ * 是否已拉过一次柜型/货物主档
+ *
+ * 用于 onMounted / onActivated 去重：KeepAlive 下首次激活两者都会触发，
+ * 不加这个标记就会在首次进入时白拉一遍接口并让 loading 图标闪一下。
+ */
+let baseDataLoaded = false;
+
 async function loadBaseData() {
   try {
     containers.value = await api.listContainers();
@@ -983,6 +991,7 @@ async function loadBaseData() {
     ElMessage.error((e as Error).message);
   } finally {
     loadingBoxes.value = false;
+    baseDataLoaded = true;
   }
 }
 
@@ -1430,37 +1439,67 @@ async function doSave() {
   }
 }
 
+/**
+ * 恢复「方案列表」跳转过来的待加载方案
+ *
+ * 抽成函数而不是写在 onMounted 里，是因为 App.vue 开了 `<KeepAlive>`：
+ * 本页被缓存后再激活时 **onMounted 不会重跑**，从方案列表点「加载」进来
+ * 就必须走 `onActivated`，否则会走到一个"看起来正常、其实没加载"的页面。
+ *
+ * 用完立刻删掉 PENDING_KEY，所以重复调用是安全的 ——
+ * 单纯切走再切回来不会把用户的当前选择又覆盖成历史方案。
+ */
+function restorePendingPlan(): void {
+  const pending = localStorage.getItem(PENDING_KEY);
+  if (!pending) return;
+  try {
+    const plan = JSON.parse(pending) as PlanRecord;
+    containerIds.value = [String(plan.containerId)];
+    containerMode.value = 'single';
+    // 恢复历史方案：同时回填数量**与选中状态**（否则货物虽在表里却不会被装载）
+    const ids: string[] = [];
+    for (const b of plan.boxes) {
+      quantities[b.id] = b.quantity ?? 1;
+      if (!ids.includes(b.id)) {
+        ids.push(b.id);
+      }
+    }
+    selectedIds.value = ids;
+    pendingPlanName.value = plan.name ?? '';
+    if (ids.length > 1) {
+      selectMode.value = 'multi';
+    }
+    result.value = plan.result;
+    multiResult.value = null;
+    rejectedList.value = plan.result.rejected ?? [];
+    ElMessage.success(`已加载方案：${plan.name}`);
+  } catch {
+    // 数据损坏则忽略
+  } finally {
+    localStorage.removeItem(PENDING_KEY);
+  }
+}
+
 onMounted(() => {
   void loadBaseData();
-  // 从方案列表跳转加载的历史方案
-  const pending = localStorage.getItem(PENDING_KEY);
-  if (pending) {
-    try {
-      const plan = JSON.parse(pending) as PlanRecord;
-      containerIds.value = [String(plan.containerId)];
-      containerMode.value = 'single';
-      // 恢复历史方案：同时回填数量**与选中状态**（否则货物虽在表里却不会被装载）
-      const ids: string[] = [];
-      for (const b of plan.boxes) {
-        quantities[b.id] = b.quantity ?? 1;
-        if (!ids.includes(b.id)) {
-          ids.push(b.id);
-        }
-      }
-      selectedIds.value = ids;
-      pendingPlanName.value = plan.name ?? '';
-      if (ids.length > 1) {
-        selectMode.value = 'multi';
-      }
-      result.value = plan.result;
-      rejectedList.value = plan.result.rejected ?? [];
-      ElMessage.success(`已加载方案：${plan.name}`);
-    } catch {
-      // 数据损坏则忽略
-    } finally {
-      localStorage.removeItem(PENDING_KEY);
-    }
+  restorePendingPlan();
+});
+
+/**
+ * 从 KeepAlive 缓存切回本页时触发（首次挂载也会触发一次）
+ *
+ * 做两件事，**都不清空用户的输入与计算结果**：
+ * 1. 刷新柜型 / 货物主档 —— 用户可能刚在「货物管理」里加了新货物，
+ *    切回来应当能看到它（只刷新列表，保留已选项；不匹配的新 id 由归一化 watch 丢弃）
+ * 2. 处理从「方案列表」跳转过来的待加载方案
+ *
+ * `baseDataLoaded` 用来跳过首次激活时与 onMounted 的重复拉取。
+ */
+onActivated(() => {
+  if (baseDataLoaded) {
+    void loadBaseData();
   }
+  restorePendingPlan();
 });
 </script>
 

@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 // 路径深度与同目录的其它 web 模块保持一致：src/web/components → ../../ = src
@@ -1190,6 +1190,38 @@ watch(
 
 onMounted(init);
 onBeforeUnmount(dispose);
+
+/**
+ * KeepAlive 缓存期间停掉渲染循环，重新激活时补一帧
+ *
+ * App.vue 给 router-view 包了 `<KeepAlive>`，本页被切走时组件**不会卸载**，
+ * 只是被移出文档。如果放任 `requestAnimationFrame` 一直跑：
+ * - 用户不在这一页时仍然满帧渲染，白烧 CPU / 电池
+ * - 而且 KeepAlive 期间 canvas 脱离文档，部分浏览器会丢弃 WebGL 绘制缓冲，
+ *   切回来看到一片黑。重新激活时强制 render 一帧即可恢复
+ *   （`preserveDrawingBuffer: true` 也起了兜底作用，见 init 里的说明）
+ */
+onActivated(() => {
+  if (renderer && scene && camera) {
+    // 面板宽度可能因侧栏/窗口变化而不同，重算 aspect 并按新尺寸渲染
+    const el = mountEl.value;
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      camera.aspect = el.clientWidth / el.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(el.clientWidth, el.clientHeight);
+    }
+    controls?.update();
+    renderer.render(scene, camera);
+  }
+  if (!frameId && renderer) {
+    frameId = requestAnimationFrame(animate);
+  }
+});
+
+onDeactivated(() => {
+  cancelAnimationFrame(frameId);
+  frameId = 0;
+});
 </script>
 
 <style scoped>
