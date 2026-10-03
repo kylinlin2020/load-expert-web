@@ -22,6 +22,7 @@ import {
   type PlanRow,
 } from '../../model/rowMapping.js';
 import type { RowStore, StoreName } from './rowStore.js';
+import type { BackupStoreAdapter } from '../../model/backupApply.js';
 import type { PlanRecord } from './types.js';
 
 /** 与 SQLite `datetime('now')` 同格式（YYYY-MM-DD HH:MM:SS，本地时间） */
@@ -244,13 +245,24 @@ export class LocalStore {
     return row ? rowToPlan(row) : null;
   }
 
-  async insertPlan(p: { name: string; containerId: string | number; boxes: Box[]; result: PackResult }): Promise<PlanRecord> {
+  /**
+   * 新增方案
+   * @param id 省略时由自增分配；指定时按该 id 写入（**仅备份恢复用**）。
+   *            `createdAt` 同理 —— 备份恢复必须保住原创建时间，
+   *            否则方案列表排序与"何时算的"全部失真。
+   */
+  async insertPlan(
+    p: { name: string; containerId: string | number; boxes: Box[]; result: PackResult },
+    id?: number,
+    createdAt?: string,
+  ): Promise<PlanRecord> {
     const row = await this.db.put<PlanRow>('plans', {
+      ...(id === undefined ? {} : { id }),
       name: p.name,
       container_id: numId(p.containerId),
       boxes_json: JSON.stringify(p.boxes),
       result_json: JSON.stringify(p.result),
-      created_at: nowSql(),
+      created_at: createdAt ?? nowSql(),
     });
     return rowToPlan(row);
   }
@@ -259,7 +271,48 @@ export class LocalStore {
     return this.db.remove('plans', numId(id));
   }
 
-  /** 暴露底层存储（导出/导入等将来功能用） */
+  /** 覆盖式恢复用：清空全部业务数据，返回被清掉的行数 */
+  async clearAll(): Promise<{ boxes: number; containers: number; plans: number }> {
+    // 顺序与 SQLite 版一致：**先 plans**，将来若启用外键强制也不会立刻炸
+    const plans = await this.db.clear('plans');
+    const boxes = await this.db.clear('boxes');
+    const containers = await this.db.clear('containers');
+    return { boxes, containers, plans };
+  }
+
+  // -------------------------------------------------------------------------
+  // 备份适配器
+  // -------------------------------------------------------------------------
+
+  /**
+   * 暴露为备份模块需要的最小接口
+   *
+   * 与 SQLite 版（`sqliteBackupAdapter`）一一对应，编排逻辑共用
+   * `src/model/backupApply.ts`，所以两边的导入语义不可能走偏。
+   *
+   * `put*` 内部已经会把 id 归一为数字（见本文件开头的说明），
+   * 因此"按备份里的 id 写回"在这里是天然成立的。
+   */
+  asBackupAdapter(): BackupStoreAdapter {
+    return {
+      listBoxes: () => this.listBoxes(),
+      listContainers: () => this.listContainers(),
+      listPlans: () => this.listPlans(),
+      putBox: async (box: Box) => {
+        await this.insertBox(box);
+      },
+      putContainer: async (c: Container) => {
+        await this.insertContainer(c);
+      },
+      putPlan: async (p) => {
+        await this.insertPlan({ name: p.name, containerId: p.containerId, boxes: p.boxes, result: p.result }, p.id, p.createdAt);
+      },
+      deletePlan: (id: number) => this.deletePlan(id),
+      clearAll: () => this.clearAll(),
+    };
+  }
+
+  /** 暴露底层存储（将来做其它存储级功能时用） */
   raw(): RowStore {
     return this.db;
   }

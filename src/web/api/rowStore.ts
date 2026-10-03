@@ -59,6 +59,8 @@ export interface RowStore {
   put<T extends Row>(store: StoreName, row: Omit<T, 'id'> & { id?: number }): Promise<T>;
   /** 删除；返回是否真的删掉了一条 */
   remove(store: StoreName, id: number): Promise<boolean>;
+  /** 清空整张表，返回删除行数（**备份恢复的覆盖模式用**） */
+  clear(store: StoreName): Promise<number>;
   /** 行数（用于"是否首次运行、要不要写种子"的判断） */
   count(store: StoreName): Promise<number>;
   /** 把内存中的改动落盘（IndexedDB 无需处理；内存适配器也无需。保留接口以便将来加导出/导入） */

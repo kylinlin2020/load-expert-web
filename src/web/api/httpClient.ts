@@ -6,6 +6,8 @@
  */
 import type { Box, Container, MultiPlanResult, PackResult } from '../../types/index.js';
 import type { ApiShape, CalculateMultiPayload, CalculatePayload, PlanRecord } from './types.js';
+import type { BackupFile } from '../../model/backup.js';
+import type { ImportOutcome } from '../../model/backupApply.js';
 import { API_BASE as BASE_URL } from './buildEnv.js';
 
 export class HttpApiError extends Error {
@@ -74,4 +76,11 @@ export const httpApi: ApiShape = {
   getPlan: (id) => request<PlanRecord>('GET', `/api/plans/${id}`),
   createPlan: (p) => request<PlanRecord>('POST', '/api/plans', p),
   deletePlan: (id) => request<void>('DELETE', `/api/plans/${id}`),
+
+  // 备份 / 恢复
+  exportBackup: async (opts) => {
+    const q = opts?.includePlans === false ? '?includePlans=0' : '';
+    return request<BackupFile>('GET', `/api/backup/export${q}`);
+  },
+  importBackup: (file, mode) => request<ImportOutcome>('POST', `/api/backup/import?mode=${mode}`, file),
 };

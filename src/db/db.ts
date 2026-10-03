@@ -261,42 +261,86 @@ export function getBox(db: DatabaseSync, id: number): Box | null {
   return row ? rowToBox(row) : null;
 }
 
+/**
+ * 内部：按列数组插入一行，返回落库后的 id
+ *
+ * ## 为什么要抽出来
+ *
+ * 备份恢复需要「以指定 id 插入」——`PackResult` 里到处是 `boxId` 引用
+ * （`placements[].boxId`、`CartonPlacement.boxId`、`SpaceBlock.baseBoxId`、
+ * `rejected[].boxId`），`PlanRecord.containerId` 也指向柜型。
+ * 若导入时重新分配 id 而漏改某处引用，界面不会报错，只会**默默显示错货名**。
+ *
+ * 早先的写法是每个 `insert*` 各写一份列清单，加 id 支持就得把 24 个列名抄两遍 ——
+ * 抄漏一列不会编译报错，只会静默丢字段。所以改成列数组拼 SQL，加 id 只是多一个元素。
+ *
+ * @param id 省略时由自增分配；指定时按该 id 写入（仅备份恢复用）
+ * @note `table` / `cols` 全部来自本文件的字面量，**不接受外部输入**，无注入面。
+ */
+function insertRow(
+  db: DatabaseSync,
+  table: string,
+  cols: string[],
+  vals: unknown[],
+  id?: number,
+): number {
+  const allCols = id === undefined ? cols : ['id', ...cols];
+  const allVals = id === undefined ? vals : [id, ...vals];
+  const placeholders = allVals.map(() => '?').join(', ');
+  const r = db.prepare(`INSERT INTO ${table} (${allCols.join(', ')}) VALUES (${placeholders})`).run(...(allVals as never[]));
+  return id === undefined ? Number(r.lastInsertRowid) : id;
+}
+
+/** 货物表的列顺序（insertBox / 备份恢复共用） */
+const BOX_COLS = [
+  'name', 'sku', 'batch', 'unit_price', 'unit', 'group_name', 'description', 'net_weight', 'color',
+  'dimension_unit', 'weight_unit',
+  'length', 'width', 'height', 'weight', 'deform_factor', 'deform_tolerance',
+  'allow_directions', 'max_place_depth', 'support_faces',
+  'stack_class', 'support_stack_class', 'support_pct', 'pcs_count',
+];
+
+function boxVals(b: NewBox): unknown[] {
+  return [
+    b.name,
+    b.sku ?? null,
+    b.batch ?? null,
+    b.unitPrice ?? null,
+    b.unit ?? null,
+    b.groupName ?? null,
+    b.description ?? null,
+    b.netWeight ?? null,
+    b.color ?? null,
+    b.dimensionUnit ?? 'mm',
+    b.weightUnit ?? 'kg',
+    b.length,
+    b.width,
+    b.height,
+    b.weight ?? 0,
+    b.deformFactor ?? 1,
+    b.deformTolerance ?? 0,
+    JSON.stringify(b.allowDirections ?? [true, true, true, true, true, true]),
+    JSON.stringify(b.maxPlaceDepth ?? [0, 0, 0, 0, 0, 0]),
+    JSON.stringify(b.supportFaces ?? [true, true, true, true, true, true]),
+    b.stackClass ?? 1,
+    JSON.stringify(b.supportClasses ?? [5, 5, 5, 5, 5, 5]),
+    JSON.stringify(b.supportPct ?? [1, 1, 1]),
+    b.pcsCount ?? 1,
+  ];
+}
+
 export function insertBox(db: DatabaseSync, b: NewBox): Box {
-  const r = db
-    .prepare(
-      `INSERT INTO boxes (name, sku, batch, unit_price, unit, group_name, description, net_weight, color, dimension_unit, weight_unit,
-                          length, width, height, weight, deform_factor, deform_tolerance,
-                          allow_directions, max_place_depth, support_faces,
-                          stack_class, support_stack_class, support_pct, pcs_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      b.name,
-      b.sku ?? null,
-      b.batch ?? null,
-      b.unitPrice ?? null,
-      b.unit ?? null,
-      b.groupName ?? null,
-      b.description ?? null,
-      b.netWeight ?? null,
-      b.color ?? null,
-      b.dimensionUnit ?? 'mm',
-      b.weightUnit ?? 'kg',
-      b.length,
-      b.width,
-      b.height,
-      b.weight ?? 0,
-      b.deformFactor ?? 1,
-      b.deformTolerance ?? 0,
-      JSON.stringify(b.allowDirections ?? [true, true, true, true, true, true]),
-      JSON.stringify(b.maxPlaceDepth ?? [0, 0, 0, 0, 0, 0]),
-      JSON.stringify(b.supportFaces ?? [true, true, true, true, true, true]),
-      b.stackClass ?? 1,
-      JSON.stringify(b.supportClasses ?? [5, 5, 5, 5, 5, 5]),
-      JSON.stringify(b.supportPct ?? [1, 1, 1]),
-      b.pcsCount ?? 1,
-    );
-  return getBox(db, Number(r.lastInsertRowid))!;
+  return getBox(db, insertRow(db, 'boxes', BOX_COLS, boxVals(b)))!;
+}
+
+/**
+ * 以指定 id 新增货物（**仅备份恢复用**）
+ *
+ * 常规新增请用 `insertBox`。id 冲突时由调用方先判断 —— 这里不做 upsert，
+ * 免得"到底覆盖了没有"变成一个要靠读日志才知道的事。
+ */
+export function insertBoxWithId(db: DatabaseSync, id: number, b: NewBox): Box {
+  return getBox(db, insertRow(db, 'boxes', BOX_COLS, boxVals(b), id))!;
 }
 
 export function updateBox(db: DatabaseSync, id: number, b: Partial<NewBox>): Box | null {
@@ -384,30 +428,38 @@ export function getContainer(db: DatabaseSync, id: number): Container | null {
   return row ? rowToContainer(row) : null;
 }
 
+/** 柜型表的列顺序（insertContainer / 备份恢复共用） */
+const CONTAINER_COLS = [
+  'name', 'length', 'width', 'height', 'weight_capacity', 'label', 'description',
+  'corner_dims', 'door_dims', 'empty_weight', 'cost', 'unit', 'dimension_unit', 'weight_unit',
+];
+
+function containerVals(c: NewContainer): unknown[] {
+  return [
+    c.name,
+    c.length,
+    c.width,
+    c.height,
+    c.weightCapacity ?? 0,
+    c.label ?? null,
+    c.description ?? null,
+    c.cornerDims ? JSON.stringify(c.cornerDims) : null,
+    c.doorDims ? JSON.stringify(c.doorDims) : null,
+    c.emptyWeight ?? null,
+    c.cost ?? null,
+    c.unit ?? null,
+    c.dimensionUnit ?? 'mm',
+    c.weightUnit ?? 'kg',
+  ];
+}
+
 export function insertContainer(db: DatabaseSync, c: NewContainer): Container {
-  const r = db
-    .prepare(
-      `INSERT INTO containers (name, length, width, height, weight_capacity, label, description,
-                               corner_dims, door_dims, empty_weight, cost, unit, dimension_unit, weight_unit)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      c.name,
-      c.length,
-      c.width,
-      c.height,
-      c.weightCapacity ?? 0,
-      c.label ?? null,
-      c.description ?? null,
-      c.cornerDims ? JSON.stringify(c.cornerDims) : null,
-      c.doorDims ? JSON.stringify(c.doorDims) : null,
-      c.emptyWeight ?? null,
-      c.cost ?? null,
-      c.unit ?? null,
-      c.dimensionUnit ?? 'mm',
-      c.weightUnit ?? 'kg',
-    );
-  return getContainer(db, Number(r.lastInsertRowid))!;
+  return getContainer(db, insertRow(db, 'containers', CONTAINER_COLS, containerVals(c)))!;
+}
+
+/** 以指定 id 新增柜型（**仅备份恢复用**） */
+export function insertContainerWithId(db: DatabaseSync, id: number, c: NewContainer): Container {
+  return getContainer(db, insertRow(db, 'containers', CONTAINER_COLS, containerVals(c), id))!;
 }
 
 export function updateContainer(db: DatabaseSync, id: number, c: Partial<NewContainer>): Container | null {
@@ -489,11 +541,39 @@ export function getPlan(db: DatabaseSync, id: number): Plan | null {
   return row ? rowToPlan(row) : null;
 }
 
-export function insertPlan(db: DatabaseSync, p: NewPlan): Plan {
-  const r = db
-    .prepare(`INSERT INTO plans (name, container_id, boxes_json, result_json) VALUES (?, ?, ?, ?)`)
-    .run(p.name, p.containerId, JSON.stringify(p.boxes), JSON.stringify(p.result));
-  return getPlan(db, Number(r.lastInsertRowid))!;
+/**
+ * 新增方案
+ * @param id 省略时由自增分配；指定时按该 id 写入（**仅备份恢复用**）。
+ *            `createdAt` 同理 —— 备份恢复必须保住原创建时间，
+ *            否则方案列表的排序与"何时算的"会全部失真。
+ */
+export function insertPlan(db: DatabaseSync, p: NewPlan, id?: number, createdAt?: string): Plan {
+  const id2 = insertRow(
+    db,
+    'plans',
+    createdAt === undefined ? ['name', 'container_id', 'boxes_json', 'result_json'] : ['name', 'container_id', 'boxes_json', 'result_json', 'created_at'],
+    createdAt === undefined
+      ? [p.name, p.containerId, JSON.stringify(p.boxes), JSON.stringify(p.result)]
+      : [p.name, p.containerId, JSON.stringify(p.boxes), JSON.stringify(p.result), createdAt],
+    id,
+  );
+  return getPlan(db, id2)!;
+}
+
+/**
+ * 清空全部业务数据（**仅备份恢复的覆盖模式用**）
+ * @returns 删除的行数（按 表:行数 汇总的明细）
+ *
+ * 顺序：**先 plans 后 boxes/containers**。
+ * plans 有 `container_id REFERENCES containers(id)`，虽然本项目没开
+ * `PRAGMA foreign_keys`（SQLite 默认 OFF，那条子句目前只是文档说明），
+ * 但清空顺序按依赖倒过来写，将来谁打开了外键强制也不会立刻炸。
+ */
+export function clearAll(db: DatabaseSync): { boxes: number; containers: number; plans: number } {
+  const plans = Number(db.prepare('DELETE FROM plans').run().changes);
+  const boxes = Number(db.prepare('DELETE FROM boxes').run().changes);
+  const containers = Number(db.prepare('DELETE FROM containers').run().changes);
+  return { boxes, containers, plans };
 }
 
 export function deletePlan(db: DatabaseSync, id: number): boolean {

@@ -83,7 +83,8 @@ load-expert-web/
 │   │                    # ⚠️ 必须保持零 Node 依赖 —— 静态版直接在浏览器里跑它
 │   ├── types/           # 核心领域类型（Box / Container / PackResult）
 │   ├── model/           # 行↔领域对象映射 + 种子数据（**两种存储共用**）
-│   ├── db/              # SQLite 数据层（boxes / containers / plans）
+│   │                    # 以及备份文件格式 backup.ts / 共用编排 backupApply.ts
+│   ├── db/              # SQLite 数据层（boxes / containers / plans）+ 备份适配器
 │   ├── server/          # Fastify REST API
 │   └── web/             # 前端（Vue3）
 │       ├── main.ts      # 入口
@@ -97,12 +98,13 @@ load-expert-web/
 │       │   ├── idbAdapter.ts  # 真实 IndexedDB
 │       │   └── buildEnv.ts    # 构建期环境读取（对 Node 友好，可被单测 import）
 │       ├── lib/         # 可单测的纯逻辑（packRows / containerGroups）
-│       ├── views/       # 货物管理 / 柜型管理 / 装柜计算 / 报表 / 方案列表 / 应用版本
+│       ├── views/       # 货物管理 / 柜型管理 / 装柜计算 / 报表 / 方案列表 / 数据备份 / 应用版本
 │       └── components/  # Packing3D.vue（Three.js 3D 可视化）
 ├── test/
 │   ├── helpers/memAdapter.ts  # RowStore 的内存实现（供静态版数据层在 Node 里测）
 │   ├── static-boundary.test.ts# 架构边界：src/web 不许碰 Node，算法层不许出 src/
-│   └── local-store.test.ts    # 静态版数据层 + 浏览器侧算法
+│   ├── local-store.test.ts    # 静态版数据层 + 浏览器侧算法
+│   └── backup.test.ts         # 备份往返幂等 / 跨存储迁移 / 引用完整性
 ├── vite.config.ts       # 前端构建配置（base / outDir 按 mode 切换）
 ├── index.html           # 前端入口页
 └── data/                # SQLite 数据库文件（首次启动自动生成；静态版不需要）
@@ -163,7 +165,40 @@ npm run preview:static      # 本地预览纯静态版产物（IndexedDB 需要�
 | 装柜结果 | 统计卡片（装载率 / 占用体积 / 总重量 / 总件数）+ **装柜步骤（现场作业单，可 3D 高亮、导出 CSV）** + 装入清单 + 分层明细（真实 z 底面分层）+ 未装原因分析 + 3D 逐箱可视化 + 逐箱坐标 CSV 导出 |
 | 多柜循环 | 同柜型循环装柜，输出「需要几个柜」+ 每柜装载率/箱数/货物构成列表 + 点击柜行切换 3D 对比 + 全部柜逐箱坐标 CSV |
 | 方案列表 | 保存的历史方案：加载（回填到装柜计算页）/ **报表**（直接出 PDF 单据）/ 删除 |
+| 数据备份 | **导出**全部货物/柜型/方案为单个 JSON / **导入**恢复（覆盖恢复 or 合并导入）/ 两套版本之间互相搬数据 |
 | 应用版本 | 版本号（按 git 提交数自增）+ 完整使用说明 + **当前是服务端版还是纯静态版** + 已知限制 |
+
+### 数据备份与恢复
+
+菜单里的「数据备份」。**两套构建用的是同一种文件格式**，因此可以互相搬数据。
+
+| | 导出 | 导入 |
+|---|---|---|
+| 界面 | 「数据备份」页 → 导出为 JSON 文件（文件名含版本号与时间戳） | 选择 `.json` 文件 → 选模式 → 导入 |
+| 服务端版 API | `GET /api/backup/export?includePlans=0` 可排除方案 | `POST /api/backup/import?mode=merge\|replace` |
+
+**两种导入模式**
+
+| 模式 | 行为 | 适用 |
+|---|---|---|
+| **覆盖恢复**（默认） | 清空现有全部数据，再按文件内容写入 | "恢复到备份时的状态"、从另一套版本搬数据 |
+| **合并导入** | 按 id 对齐：文件里有的覆盖或新增，**文件里没有的现有记录一律保留** | 往已有数据里补充内容 |
+
+覆盖恢复会**在清空前自动下载一份当前数据**作为退路，再要求确认 ——
+让用户在点之前不用做任何事就能拿到当前状态的备份，选错文件也有退路。
+
+> 校验刻意**严格**：任何一条记录不合法就整体拒绝，并指出是哪一条的哪个字段，
+> 不做"跳过坏记录"。恢复操作里静默丢记录是最坏的失败方式 —— 用户以为全部恢复了，
+> 几天后才发现少了几条柜型。
+
+> **导入会补齐老记录缺失的字段**（如 `deformFactor` / `allowDirections`），这是
+> **单向归一化**，不是丢数据：算法判定是 `allowDirections?.[o] === false`，
+> 缺省与 `[true×6]` 等价。归一化之后往返即幂等，由测试锁定。
+
+> **id 原样保留**：存下来的 `PackResult` 里到处是 `boxId` 引用
+> （`placements[].boxId` 等），`Plan.containerId` 指向柜型。重新分配 id 而漏改引用，
+> 界面不会报错，只会默默显示错货名 —— 所以导入严格按文件里的 id 写回，
+> 由「导出 → 导入 → 再导出」的幂等性测试盯着。
 
 ### 响应式
 
@@ -268,6 +303,8 @@ GEN_VERSION_DEBUG=1 npm run genversion   # 打印脏检查的解析过程，排�
 | POST | `/api/plans/calculate-multi` | 多柜自动装载（同柜型循环装载，返回 MultiPlanResult） |
 | GET / POST | `/api/plans` | 方案列表 / 保存方案 |
 | GET / DELETE | `/api/plans/:id` | 方案详情 / 删除 |
+| GET | `/api/backup/export` | 导出备份（`?includePlans=0` 排除方案） |
+| POST | `/api/backup/import` | 导入备份（`?mode=merge\|replace`），body 为备份对象 |
 
 ## 高级计算选项（`options`，随计算请求透传）
 
@@ -400,7 +437,7 @@ GEN_VERSION_DEBUG=1 npm run genversion   # 打印脏检查的解析过程，排�
 ## 测试
 
 ```bash
-npm test   # 87 项（先 tsc 编译，再 node --test）
+npm test   # 108 项（先 tsc 编译，再 node --test）
 ```
 
 覆盖范围：
@@ -409,6 +446,7 @@ npm test   # 87 项（先 tsc 编译，再 node --test）
 |---|---|
 | `algorithm.test.ts` | 算法引擎 73 项：6 策略 × 多场景、堆码/承托约束、多柜循环、无限数量语义、装 0 缺陷回归 |
 | `local-store.test.ts` | 静态版数据层：CRUD 语义、种子规则、脏数据归一化、**浏览器侧算法算出 966 箱 / 95.96%** |
+| `backup.test.ts` | 备份格式校验、**两种存储的往返幂等**、跨存储迁移、id 与 `boxId` 引用完整性、合并/覆盖语义 |
 | `static-boundary.test.ts` | 架构边界：`src/web` 不许 import `node:*` / 服务端代码；算法层不许出 `src/`；两个数据实现方法集齐全 |
 
 > 静态版的数据层能在 Node 里被测到，靠的是把 IndexedDB 抽象成一个 5 方法的窄接口

@@ -89,6 +89,18 @@ export function createIdbStore(): RowStore {
       return true;
     },
 
+    async clear(store: StoreName): Promise<number> {
+      const db = await openDb();
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      // 必须先 await count 再 clear：IDB 事务会在事件循环里没有待处理请求时自动提交，
+      // 中途 await 会让事务有机会被提前提交掉。实测把两者串行 await 即可，
+      // 因为 count 的请求是在同一个任务里发出的，事务还活着。
+      const n = await reqToPromise(os.count());
+      await reqToPromise(os.clear() as unknown as IDBRequest<undefined>);
+      return n;
+    },
+
     async count(store: StoreName): Promise<number> {
       const db = await openDb();
       const tx = db.transaction(store, 'readonly');

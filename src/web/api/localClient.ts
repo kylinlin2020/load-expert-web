@@ -18,6 +18,8 @@
  */
 import type { Box, Container, LoadOptions, MultiPlanResult, PackResult } from '../../types/index.js';
 import { load, planMultiContainer } from '../../algorithm/load.js';
+import { exportBackup, importBackup } from '../../model/backupApply.js';
+import { appVersion } from '../../version.js';
 import { createIdbStore } from './idbAdapter.js';
 import { LocalStore, numId } from './localStore.js';
 import type { RowStore } from './rowStore.js';
@@ -34,6 +36,9 @@ export class LocalApiError extends Error {
 function newStore(db: RowStore): LocalStore {
   return new LocalStore(db);
 }
+
+/** 版本号只用于写进备份文件头给人看，取静态字符串避免多一次 import 副作用 */
+const APP_VERSION: string = appVersion.version;
 
 /** 默认实例：真实 IndexedDB（浏览器） */
 let singleton: ApiShape | null = null;
@@ -199,6 +204,19 @@ export function createLocalApi(db?: RowStore): ApiShape {
     },
     async deletePlan(id) {
       await store.deletePlan(id);
+    },
+
+    // -------------------------------------------------------------------------
+    // 备份 / 恢复（数据在 IndexedDB，算法与编排仍是同一份共用代码）
+    // -------------------------------------------------------------------------
+    async exportBackup(opts) {
+      await ensureSeeded();
+      return exportBackup(store.asBackupAdapter(), APP_VERSION, opts?.includePlans ?? true);
+    },
+
+    async importBackup(file, mode) {
+      await ensureSeeded();
+      return importBackup(store.asBackupAdapter(), file, mode);
     },
   };
 }

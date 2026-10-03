@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Box, Van, Cpu, List, InfoFilled, Fold } from '@element-plus/icons-vue';
+import { Box, Van, Cpu, List, InfoFilled, Fold, Download } from '@element-plus/icons-vue';
 import { appVersion } from '../version';
 
 const router = useRouter();
@@ -84,6 +84,9 @@ const MENU = [
   { index: '/containers', label: '柜型管理', icon: Van },
   { index: '/calculate', label: '装柜计算', icon: Cpu },
   { index: '/plans', label: '方案列表', icon: List },
+  // 备份入口放在业务菜单里而不是塞进「应用版本」——
+  // 这是**唯一的救命手段**，真出事时用户不该在"关于"里翻找它。
+  { index: '/backup', label: '数据备份', icon: Download },
   { index: '/about', label: '应用版本', icon: InfoFilled },
 ];
 

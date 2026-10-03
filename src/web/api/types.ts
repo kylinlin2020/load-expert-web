@@ -5,6 +5,8 @@
  * 这正是"同一个代码库出两个版本"的关键：只有数据层与路由/构建配置不同。
  */
 import type { Box, Container, LoadOptions, MultiPlanResult, PackResult } from '../../types/index.js';
+import type { BackupFile, ImportMode } from '../../model/backup.js';
+import type { ImportOutcome } from '../../model/backupApply.js';
 
 /** 装柜方案记录（与后端 plans 表、IndexedDB 的 plans 表都对齐） */
 export interface PlanRecord {
@@ -75,4 +77,18 @@ export interface ApiShape {
   getPlan: (id: number) => Promise<PlanRecord>;
   createPlan: (p: { name: string; containerId: string | number; boxes: Box[]; result: PackResult }) => Promise<PlanRecord>;
   deletePlan: (id: number) => Promise<void>;
+
+  /**
+   * 备份 / 恢复
+   *
+   * 两种实现共用 `src/model/backup.ts` 的文件格式与 `backupApply.ts` 的编排，
+   * 所以服务端版导出的文件能在静态版导入，反之亦然。
+   */
+  /** 导出全部货物/柜型/方案为一个可下载的 JSON */
+  exportBackup: (opts?: { includePlans?: boolean }) => Promise<BackupFile>;
+  /**
+   * 从已解析的备份文件恢复
+   * @param mode `merge` 按 id 对齐、不删除文件外的记录；`replace` 先清空再写入
+   */
+  importBackup: (file: BackupFile, mode: ImportMode) => Promise<ImportOutcome>;
 }

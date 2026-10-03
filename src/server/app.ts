@@ -16,6 +16,8 @@
  *   GET    /api/plans/:id             方案详情
  *   POST   /api/plans                 保存方案
  *   DELETE /api/plans/:id             删除方案
+ *   GET    /api/backup/export         导出备份（?includePlans=0 可排除方案）
+ *   POST   /api/backup/import         导入备份（?mode=merge|replace）
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
@@ -40,6 +42,9 @@ import {
   type NewBox,
   type NewContainer,
 } from '../db/index.js';
+import { exportBackupSqlite, importBackupSqlite } from '../db/backup.js';
+import { validateBackup, type BackupFile } from '../model/backup.js';
+import { appVersion } from '../version.js';
 import type { Box, Container, LoadOptions } from '../types/index.js';
 
 export interface CalculateBody {
@@ -364,6 +369,32 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       return reply.status(404).send({ error: 'plan not found' });
     }
     return reply.status(204).send();
+  });
+
+  // ── 备份 / 恢复 ────────────────────────────────────────────────────────────
+  // 格式与校验在 src/model/backup.ts，编排在 src/model/backupApply.ts，
+  // 与静态版（IndexedDB）**共用同一份** —— 两边数据因此可以互相迁移。
+  app.get('/api/backup/export', async (request, reply) => {
+    const q = request.query as { includePlans?: string };
+    const includePlans = q.includePlans !== '0';
+    const file = await exportBackupSqlite(db, appVersion.version, includePlans);
+    return reply.send(file);
+  });
+
+  app.post('/api/backup/import', async (request, reply) => {
+    const q = request.query as { mode?: string };
+    const mode = q.mode === 'replace' ? 'replace' : 'merge';
+    // 前端已经把文件读成对象了，这里**再校验一遍**（validateBackup 与 parseBackup
+    // 共用同一套规则），而不是信任"前端已经验过了" —— 两套规则迟早会分叉。
+    let file: BackupFile;
+    try {
+      file = validateBackup(request.body);
+    } catch (e) {
+      // 格式错误要**原样把中文消息回给前端**（界面直接显示它），不要包成通用报错
+      return reply.status(400).send({ error: e instanceof Error ? e.message : '备份文件无效' });
+    }
+    const outcome = await importBackupSqlite(db, file, mode);
+    return reply.send(outcome);
   });
 
   return app;

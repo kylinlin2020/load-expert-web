@@ -60,6 +60,12 @@ export function createMemStore(): RowStore {
       return bucket(store).delete(id);
     },
 
+    async clear(store: StoreName): Promise<number> {
+      const n = bucket(store).size;
+      bucket(store).clear();
+      return n;
+    },
+
     async count(store: StoreName): Promise<number> {
       return bucket(store).size;
     },
