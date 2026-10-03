@@ -1,0 +1,40 @@
+{
+  "name": "load-expert-web",
+  "version": "0.1.0",
+  "description": "LoadExpert Web 版 - 现代 Web 装柜计算软件（Vue3 + TypeScript 全栈方案，算法引擎阶段）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "demo": "npm run build && node dist/scripts/demo.js",
+    "server": "npm run build && node dist/src/server/index.js",
+    "dev": "vite",
+    "build:web": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "loading",
+    "container",
+    "fillspace",
+    "load-expert"
+  ],
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@fastify/cors": "^11.3.0",
+    "element-plus": "^2.14.7",
+    "fastify": "^5.12.5",
+    "three": "^0.186.1",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1"
+  }
+}
