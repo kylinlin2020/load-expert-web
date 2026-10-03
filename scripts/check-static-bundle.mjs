@@ -16,10 +16,33 @@
  * 用法：npm run build:web:static（已自动串上本脚本）
  * 或   node scripts/check-static-bundle.mjs
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const OUT_DIR = 'D:/output/load-expert-web/dist/web';
+/**
+ * 仓库根目录：从脚本自身位置往上找带 package.json 的那一层
+ *
+ * ## 为什么不写死路径
+ *
+ * 写死 `D:/output/load-expert-web` 在本机能跑，**换到 GitHub Actions（Linux）立刻失败** ——
+ * 而这个脚本恰恰最该在 CI 里跑（它守的正是"静态产物能不能独立部署"）。
+ * 往上找 package.json 则与 cwd、编译输出布局、操作系统都无关。
+ */
+function findRepoRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, 'package.json'))) return dir;
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  throw new Error(`从 ${startDir} 往上找不到 package.json，无法确定仓库根目录`);
+}
+
+const ROOT = findRepoRoot(dirname(fileURLToPath(import.meta.url)));
+const OUT_DIR = join(ROOT, 'dist', 'web');
+const SRC_ROOT = ROOT;
 
 /** 出现即视为污染的标识（都是我们**绝不会**打进静态包的东西） */
 const FORBIDDEN = [
@@ -56,7 +79,6 @@ const REQUIRED = [
   { marker: 'dim-mismatch', src: 'src/algorithm/simplex.ts' },
   { marker: 'empty-problem', src: 'src/algorithm/simplex.ts' },
 ];
-const SRC_ROOT = 'D:/output/load-expert-web';
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -85,7 +107,7 @@ let bad = 0;
 const bundle = js.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
 
 for (const { f, src } of bundle) {
-  const rel = f.replace(OUT_DIR + '/', '');
+  const rel = f.replace(OUT_DIR + '/', '').replace(OUT_DIR + '\\', '');
   for (const key of FORBIDDEN) {
     const n = src.split(key).length - 1;
     if (n > 0) {

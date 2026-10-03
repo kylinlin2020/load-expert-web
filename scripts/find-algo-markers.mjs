@@ -21,10 +21,23 @@
  *  2. 只出现在算法里，src/web 下任何文件都没有（否则前端也带了它，区分不了）
  *  3. 位于每次计算都会走到的代码路径上（不是调试分支）
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = 'D:/output/load-expert-web';
+/** 仓库根目录：从脚本位置往上找带 package.json 的那一层（换机器/换 CI 也不会失效） */
+function findRepoRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, 'package.json'))) return dir;
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  throw new Error(`从 ${startDir} 往上找不到 package.json`);
+}
+
+const ROOT = findRepoRoot(dirname(fileURLToPath(import.meta.url)));
 
 /** 收集目录下所有文件的文本（顺带处理子目录） */
 function collect(relDir, out = []) {

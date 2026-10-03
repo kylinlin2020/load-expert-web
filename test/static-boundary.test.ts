@@ -12,10 +12,37 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = 'D:/output/load-expert-web';
+/**
+ * 仓库根目录：从本文件位置往上找带 package.json 的那一层
+ *
+ * ## 为什么不能写死路径
+ *
+ * 写死 `D:/output/load-expert-web` 在本机能跑，**换到 Linux / GitHub Actions 立刻失败** ——
+ * 而这三条边界检查恰恰必须在 CI 里跑（它们守的正是"静态产物能不能独立部署"）。
+ * 往上找 package.json 与 cwd、tsc 输出布局（源码在 test/、编译后�� dist/test/）、
+ * 操作系统都无关。
+ */
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, 'package.json'))) return dir;
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  throw new Error(`从 ${startDir} 往上找不到 package.json，无法确定仓库根目录`);
+}
+
+const ROOT = findRepoRoot(dirname(fileURLToPath(import.meta.url)));
+
+/** 报错信息里用相对路径（Windows 上 backslash 会让 replace 失效） */
+function relOf(abs: string): string {
+  return abs.replace(ROOT + '/', '').replace(ROOT + '\\', '');
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -45,7 +72,7 @@ test('src/web 不许引用 Node 内置模块或服务端代码', () => {
   assert.ok(files.length > 0, '应至少扫到一些 web 层文件');
   const offenders: string[] = [];
   for (const f of files) {
-    const rel = f.replace(ROOT + '/', '');
+    const rel = relOf(f);
     for (const spec of importSpecifiers(readFileSync(f, 'utf8'))) {
       const bad =
         spec.startsWith('node:') ||
@@ -63,7 +90,7 @@ test('src/algorithm 保持零 Node 依赖（静态版在浏览器里就跑它）
   const files = walk(join(ROOT, 'src/algorithm'));
   const offenders: string[] = [];
   for (const f of files) {
-    const rel = f.replace(ROOT + '/', '');
+    const rel = relOf(f);
     for (const spec of importSpecifiers(readFileSync(f, 'utf8'))) {
       // 只允许同目录模块与 src/types
       if (spec.startsWith('node:')) {

@@ -32,13 +32,13 @@ export interface AppVersion {
 }
 
 export const appVersion: AppVersion = {
-  "version": "0.1.12",
+  "version": "0.1.13",
   "source": "git",
-  "commit": 12,
-  "commitShort": "255cf56",
-  "commitDate": "2026-10-03T18:59:35+08:00",
+  "commit": 13,
+  "commitShort": "21bec9a",
+  "commitDate": "2026-10-03T20:31:18+08:00",
   "dirty": true,
-  "builtAt": "2026-10-03T12:26:33.454Z"
+  "builtAt": "2026-10-03T12:39:49.271Z"
 };
 
 export default appVersion;

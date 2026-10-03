@@ -1,0 +1,70 @@
+# 纯静态版 → GitHub Pages
+#
+# 为什么值得单独一个 workflow：这个版本的价值就是「零托管成本」，
+# 代码一 push 就该自动变成一个能访问的网址，而不是还要人去本地 build 再传文件。
+#
+# 为什么不需要任何额外配置：静态版刻意用了 **hash 路由 + 相对 base（./）**。
+# 所以同一份产物丢到
+#   项目站 https://<user>.github.io/<repo>/
+#   用户站 https://<user>.github.io/
+# 都能跑 —— 换仓库名、改成用户站都不用改一行配置。
+# 若哪天改回 history 路由 + 绝对 base，这里就必须按仓库名配置 `base`。
+
+name: 部署纯静态版到 GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # 允许手动触发，方便验证 Pages 配置是否已打开
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署；新 push 取消还在跑的旧部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 —— 版本号 = git 提交总数，浅克隆拿不到准确提交数
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # 先跑测试：算法算错却照发不误，比不发更糟
+      - name: 测试
+        run: npm test
+
+      # 这一步末尾会自动跑 check-static-bundle.mjs：
+      # 查产物里没有 Node/服务端代码、算法没被 tree-shake、资源引用是相对路径。
+      # 不通过就不会进入部署步骤（脚本 exit 1 会中断 job）。
+      - name: 构建纯静态版 + 产物自检
+        run: npm run build:web:static
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
