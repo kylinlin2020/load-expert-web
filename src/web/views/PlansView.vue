@@ -140,7 +140,5 @@ onMounted(refresh);
 </script>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 12px;
-}
+/* `.toolbar` 在 App.vue 全局样式里（与柜型 / 货物页共用一份） */
 </style>

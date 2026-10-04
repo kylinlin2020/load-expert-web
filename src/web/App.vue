@@ -285,6 +285,34 @@ watch(() => route.path, () => {
   display: none;
 }
 
+/* ───────────── 列表页工具条（柜型 / 货物 / 方案 三页共用）─────────────
+ *
+ * ## 原来为什么在手机上挤成一团
+ *
+ * 三个页面各写了一份 `.toolbar { margin-bottom: 12px }`，**里面没有 flex**。
+ * 于是子元素靠行内流 + 空白符自然换行，控件间距取决于源码里的缩进量。
+ * 货物页的过滤下拉还额外带着 `style="width:180px; margin-left:16px"` ——
+ * **行内样式优先级高于任何选择器，媒体查询覆盖不掉**。于是窄屏下它换行到第二行时，
+ * 那 16px 左边距仍然生效，把下拉框推得缩进，看着像是嵌在按钮下面。
+ *
+ * ## 改法
+ *
+ * 1. 删掉行内样式，尺寸交给样式表 —— 这样断点才管得住
+ * 2. 工具条改成 flex + gap：换行由 flex 决定，不再依赖源码缩进，
+ *    三个页面视觉也自动一致
+ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.toolbar .el-select {
+  width: 180px;
+}
+
 @media (max-width: 991px) {
   /* `!important` 是必需的：el-table 自带 display/布局声明，优先级高于此处的类选择器 */
   .only-desktop {
@@ -292,6 +320,17 @@ watch(() => route.path, () => {
   }
   .only-mobile {
     display: block;
+  }
+
+  /* 过滤器独占一行并撑满整宽：手机上 180px 的窄下拉既挤、又不好点 */
+  .toolbar .el-select {
+    flex: 1 0 100%;
+    width: auto;
+    margin-top: 4px;
+  }
+  /* 按钮给足点击高度（默认 32px 在手机上偏小） */
+  .toolbar .el-button {
+    min-height: 36px;
   }
 }
 

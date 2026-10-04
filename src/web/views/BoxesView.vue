@@ -4,11 +4,14 @@
       <div class="toolbar">
         <el-button type="primary" @click="openCreate">新增货物</el-button>
         <el-button @click="refresh">刷新</el-button>
+        <!--
+          尺寸不在这里写：行内样式优先级最高，媒体查询覆盖不掉，
+          窄屏就没法让这个下拉独占一行。改由 App.vue 全局的 `.toolbar .el-select` 负责。
+        -->
         <el-select
           v-model="groupFilter"
           placeholder="按分组过滤"
           clearable
-          style="width: 180px; margin-left: 16px"
           @change="onGroupFilterChange"
         >
           <el-option v-for="g in groupOptions" :key="g" :label="g" :value="g" />
@@ -514,9 +517,9 @@ onMounted(refresh);
 </script>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 12px;
-}
+/* `.toolbar` 移到 App.vue 的全局样式里了 —— 三页共用一份，
+   且需要能整体覆盖窄屏断点；原来这里只写 margin-bottom、没有 flex，
+   是窄屏下控件挤成一团的根因。 */
 .form-hint {
   margin-left: 10px;
   font-size: 12px;
