@@ -37,10 +37,20 @@ import { httpApi } from './httpClient.js';
 import { getLocalApi } from './localClient.js';
 import { IS_STATIC_BUILD } from './buildEnv.js';
 import type { ApiShape } from './types.js';
+import { withReferenceLib } from './withReferenceLib.js';
 
 export { IS_STATIC_BUILD };
 
-export const api: ApiShape = IS_STATIC_BUILD ? getLocalApi() : httpApi;
+/**
+ * 基础实现：静态版走 IndexedDB，服务端版走 /api
+ *
+ * 外面再包一层「共享资料库」装饰器（见 `withReferenceLib`）——
+ * 它只改写 `listBoxes` / `listContainers` 两个读方法，其余原样转发，
+ * 所以**视图层对这个功能完全无感**，也没法不小心往库里写。
+ */
+const base: ApiShape = IS_STATIC_BUILD ? getLocalApi() : httpApi;
+
+export const api: ApiShape = withReferenceLib(base);
 
 /**
  * 统一错误类型：两个实现都提供带 status 的 Error

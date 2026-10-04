@@ -8,7 +8,13 @@
       <el-table :data="containers" v-loading="loading" border stripe class="only-desktop">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="label" label="标签" width="90" />
-        <el-table-column prop="name" label="名称" min-width="160" />
+        <el-table-column prop="name" label="名称" min-width="160">
+          <!-- 「资料库」标记：来自共享资料库的条目不是本机数据，得一眼看出 -->
+          <template #default="{ row }">
+            {{ row.name }}
+            <span v-if="isFromLib('container', row.id)" class="lib-mark" title="来自共享资料库，不在本机数据里">资料库</span>
+          </template>
+        </el-table-column>
         <el-table-column label="内尺寸 L×W×H (mm)" width="210">
           <template #default="{ row }">{{ row.innerLength }} × {{ row.innerWidth }} × {{ row.innerHeight }}</template>
         </el-table-column>
@@ -25,7 +31,7 @@
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm title="确认删除该柜型？" @confirm="remove(row)">
+            <el-popconfirm :title="delConfirmTitle(row)" @confirm="remove(row)">
               <template #reference>
                 <el-button size="small" type="danger">删除</el-button>
               </template>
@@ -44,7 +50,10 @@
         <div v-else-if="containers.length === 0" class="mcard-empty">还没有柜型，点「新增柜型」开始。</div>
         <div v-for="row in containers" :key="row.id" class="mcard">
           <div class="mcard-head">
-            <span class="mcard-lead" style="margin-top: 0">{{ row.name }}</span>
+            <span class="mcard-lead" style="margin-top: 0">
+              {{ row.name }}
+              <span v-if="isFromLib('container', row.id)" class="lib-mark">资料库</span>
+            </span>
             <el-tag v-if="row.label" size="small" type="info">{{ row.label }}</el-tag>
           </div>
           <div class="mcard-lead">{{ row.innerLength }} × {{ row.innerWidth }} × {{ row.innerHeight }}</div>
@@ -60,7 +69,7 @@
           </div>
           <div class="mcard-ops">
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm title="确认删除该柜型？" @confirm="remove(row)">
+            <el-popconfirm :title="delConfirmTitle(row)" @confirm="remove(row)">
               <template #reference>
                 <el-button size="small" type="danger">删除</el-button>
               </template>
@@ -187,11 +196,15 @@ import { ElMessage } from 'element-plus';
 import api from '../api/client';
 import { defaultContainerForm, containerFormToPayload, containerToForm } from '../lib/containerForm';
 import type { Container } from '../../types';
+import { isFromLib } from '../api/withReferenceLib';
+import { addDeletedId } from '../lib/referenceStore';
 
 const containers = ref<Container[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
 const editing = ref<Container | null>(null);
+/** 正在编辑的条目是否来自共享资料库（决定保存后的提示文案） */
+const wasFromLib = ref(false);
 const form = reactive({
   name: '',
   label: '',
@@ -240,12 +253,15 @@ async function refresh() {
 
 function openCreate() {
   editing.value = null;
+  wasFromLib.value = false;
   Object.assign(form, defaultForm());
   dialogVisible.value = true;
 }
 
 function openEdit(row: Container) {
   editing.value = row;
+  // 必须在编辑**之前**记：保存后同 id 就变成"本地优先"了，再查已查不出
+  wasFromLib.value = isFromLib('container', row.id);
   Object.assign(form, containerToForm(row));
   dialogVisible.value = true;
 }
@@ -259,10 +275,15 @@ async function submit() {
     const payload = toPayload(form);
     if (editing.value) {
       await api.updateContainer(editing.value.id, payload);
+      if (wasFromLib.value) {
+        ElMessage.success('已存为本地版本（这份资料库不会被改动，下次刷新仍在）');
+      } else {
+        ElMessage.success('保存成功');
+      }
     } else {
       await api.createContainer(payload);
+      ElMessage.success('保存成功');
     }
-    ElMessage.success('保存成功');
     dialogVisible.value = false;
     await refresh();
   } catch (e) {
@@ -270,7 +291,36 @@ async function submit() {
   }
 }
 
+/**
+ * 删除确认框的标题
+ *
+ * **库条目必须换一套说法。**对一条"本机根本没有、只是从库里读出来"的条目
+ * 说"确认删除该柜型？"是误导 —— 它删不掉任何东西，只是在本机隐藏。
+ * 用户点确定后发现条目还在，会以为程序有 bug。
+ */
+function delConfirmTitle(row: Container): string {
+  return isFromLib('container', row.id)
+    ? `「${row.name}」来自共享资料库。确定在这台设备上隐藏它？（资料库文件不受影响，其它设备仍会显示）`
+    : '确认删除该柜型？';
+}
+
+/**
+ * 删除
+ *
+ * 分两种。**不做区分会出真 bug**：库里的条目本地并不存在，
+ * `api.deleteContainer` 对它是空操作，而旧代码无条件提示"已删除" ——
+ * 用户以为删掉了，刷新后它还在，**界面在撒谎**。
+ *
+ * 确认框已经在 `delConfirmTitle` 里把话说清了，这里不再弹第二次
+ * （两次确认既烦人又容易让人以为出错了）。
+ */
 async function remove(row: Container) {
+  if (isFromLib('container', row.id)) {
+    addDeletedId('container', row.id);
+    ElMessage.success('已在本机隐藏。资料库文件本身没有改动');
+    await refresh();
+    return;
+  }
   try {
     await api.deleteContainer(row.id);
     ElMessage.success('已删除');

@@ -49,6 +49,80 @@
       </div>
     </el-card>
 
+    <!-- ══════════ 共享资料库 ══════════
+         与「导出备份」配对：左边导出参考数据 → 传到网盘/对象存储 →
+         右边把地址填进所有设备，柜型/货物就都能查到了。
+    -->
+    <el-card shadow="never" class="mt16">
+      <template #header>共享资料库（多设备查同一份柜型与货物）</template>
+
+      <p class="hint">
+        静态版的数据只在本浏览器里，办公室录好的柜型/货物，手机上查不到。
+        把「参考数据」导成一个 JSON 放到网盘或对象存储，在每台设备上填它的地址，
+        就能随手查到同一份资料。
+      </p>
+
+      <el-alert type="info" :closable="false" show-icon class="mt8 mb8"
+        title="三条规则，动手前先看清">
+        <template #default>
+          <ul class="rules">
+            <li><strong>库里的数据永远写不进本地</strong> —— 拉取失败、文件被传错、库被清空，
+              最坏只是「查不到共享资料」，<strong>绝不会覆盖你本地的数据</strong>。</li>
+            <li><strong>编辑库里的条目 = 存成你自己的</strong>（同 id，本地优先）。
+              要改回去，在维护设备上改源文件再重新上传。</li>
+            <li><strong>不会写回远程</strong>。共享库是「上次快照」，不是双向同步。</li>
+          </ul>
+        </template>
+      </el-alert>
+
+      <div class="row">
+        <el-button :loading="exportingLib" @click="doExportLib">
+          <el-icon class="mr4"><Download /></el-icon>导出参考数据（柜型 + 货物）
+        </el-button>
+        <span class="hint">不含历史方案与实测案例，文件很小，适合传网盘</span>
+      </div>
+
+      <el-divider />
+
+      <el-form label-width="76px">
+        <el-form-item label="资料库地址">
+          <el-input
+            v-model="libUrlInput"
+            placeholder="https://.../装柜参考数据.json"
+            :disabled="probing || savingLib"
+          />
+        </el-form-item>
+      </el-form>
+
+      <div class="row">
+        <el-button :loading="probing" @click="doProbeLib">测试这个地址</el-button>
+        <el-button type="primary" :loading="savingLib" @click="doSaveLib">保存并启用</el-button>
+        <el-button v-if="libUrl" @click="doClearLib">停用</el-button>
+      </div>
+
+      <div class="mt8">
+        <template v-if="probing">
+          <el-alert :type="probeOk ? 'success' : 'error'" :closable="false" show-icon
+            :title="probeOk ? `地址可用：读到 ${probeBoxes} 种货物、${probeContainers} 个柜型` : '地址不可用'" />
+          <p v-if="!probeOk" class="hint danger mt4">{{ probeError }}</p>
+        </template>
+        <el-alert v-else-if="libUrl" :type="libNoticeType" :closable="false" show-icon :title="libNotice" />
+        <p v-else class="hint">未启用。启用前所有功能与现在完全一样，不填这个地址也没有任何影响。</p>
+      </div>
+
+      <p class="hint mt8">
+        地址必须允许跨域读取（响应带 <code>Access-Control-Allow-Origin</code>），
+        否则浏览器会拦下响应。网盘分享链接一般不满足；
+        仓库里有 <code>scripts/check-cors.mjs</code> 可先测一把。
+      </p>
+
+      <p class="hint mt4">
+        <strong>只要 URL 不公开，别人就拿不到。</strong>但它终究是公开可读的文件，
+        拿到链接的人能读到柜型与货物规格 —— 柜型尺寸本就是 ISO 公开标准，
+        货物规格是否敏感你自己判断。
+      </p>
+    </el-card>
+
     <!-- ══════════ 导入 ══════════ -->
     <el-card shadow="never" class="mt16">
       <template #header>导入备份</template>
@@ -145,14 +219,23 @@
  * 列表里凭空多出用户从没见过的柜型。
  * 而「导入备份」在用户心里就是"恢复到备份时的状态"，replace 才是那个语义。
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Download, Upload } from '@element-plus/icons-vue';
 import api from '../api/client';
 import { IS_STATIC_BUILD as isLocalBuild } from '../api/client';
-import { parseBackup, describeBackup, backupFileName, type BackupFile, type ImportMode } from '../../model/backup';
+import { parseBackup, describeBackup, backupFileName, buildBackup, type BackupFile, type ImportMode } from '../../model/backup';
 import { appVersion } from '../../version';
 import type { ImportOutcome } from '../../model/backupApply';
+import {
+  clearLib,
+  ensureLib,
+  getLibUrl,
+  libState,
+  probeLibUrl,
+  setLibUrl,
+} from '../lib/referenceStore';
+import { downloadText } from '../lib/diagnosticFile';
 
 const MODE_DESC: Record<ImportMode, string> = {
   replace:
@@ -177,9 +260,135 @@ const file = ref<BackupFile | null>(null);
 
 const isLocal = isLocalBuild;
 
+// ── 共享资料库 ────────────────────────────────────────────────────────────
+const libUrl = ref(getLibUrl());
+const libUrlInput = ref(getLibUrl());
+const probing = ref(false);
+const probeOk = ref(false);
+const probeError = ref('');
+const probeBoxes = ref(0);
+const probeContainers = ref(0);
+const savingLib = ref(false);
+const exportingLib = ref(false);
+const libInfo = ref(libState());
+
+/** 已启用时的状态条。**如实区分"正常"与"用的是缓存"**，不假装一切正常 */
+const libNotice = computed(() => {
+  if (!libUrl.value) return '';
+  if (libInfo.value.lastError) return `已启用，但最近一次拉取没成功：${libInfo.value.lastError}（继续使用上次缓存的内容）`;
+  if (libInfo.value.loadedAt === 0) return '已启用，尚未成功拉到内容';
+  const when = new Date(libInfo.value.loadedAt).toLocaleString('zh-CN');
+  const n = libInfo.value.payload;
+  return `已启用：上次更新 ${when}，含 ${n?.containers.length ?? 0} 个柜型、${n?.boxes.length ?? 0} 种货物${libInfo.value.stale ? '（已超过 6 小时，下次打开会自动重新拉）' : ''}`;
+});
+const libNoticeType = computed(() => {
+  if (!libUrl.value) return 'info';
+  if (libInfo.value.lastError) return 'warning';
+  if (libInfo.value.loadedAt === 0) return 'warning';
+  return 'success';
+});
+
+/**
+ * 导出参考数据
+ *
+ * 就是「导出备份」把 `plans` 与 `cases` 置空 —— 复用 `buildBackup`，
+ * 所以产出的文件**同时是一个合法备份文件**：既能当资料库上传，
+ * 也能直接被本应用「导入」回去，不需要任何转换。
+ */
+async function doExportLib(): Promise<void> {
+  exportingLib.value = true;
+  try {
+    const [boxes, containers] = await Promise.all([api.listBoxes(), api.listContainers()]);
+    if (boxes.length === 0 && containers.length === 0) {
+      ElMessage.warning('还没有货物与柜型，没什么可导出的');
+      return;
+    }
+    const file = buildBackup({
+      boxes,
+      containers,
+      plans: [],
+      cases: [],
+      appVersion: appVersion.version,
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadText(JSON.stringify(file, null, 2), `装柜参考数据_${stamp}.json`, 'application/json;charset=utf-8');
+    ElMessage.success(`已导出：${containers.length} 个柜型、${boxes.length} 种货物。把它上传到网盘，再把地址填到下面`);
+  } catch (e) {
+    ElMessage.error(`导出失败：${(e as Error).message}`);
+  } finally {
+    exportingLib.value = false;
+  }
+}
+
+/** 先验地址再决定存不存 —— 避免"存了才发现根本读不到" */
+async function doProbeLib(): Promise<void> {
+  const url = libUrlInput.value.trim();
+  if (!url) {
+    ElMessage.warning('先填一个地址');
+    return;
+  }
+  probing.value = true;
+  probeOk.value = false;
+  probeError.value = '';
+  try {
+    const r = await probeLibUrl(url);
+    probeOk.value = r.ok;
+    probeError.value = r.error;
+    if (r.ok) {
+      probeBoxes.value = r.boxes;
+      probeContainers.value = r.containers;
+      ElMessage.success(`地址可用：${r.containers} 个柜型、${r.boxes} 种货物`);
+    }
+  } finally {
+    probing.value = false;
+  }
+}
+
+async function doSaveLib(): Promise<void> {
+  const url = libUrlInput.value.trim();
+  if (!url) {
+    ElMessage.warning('先填一个地址');
+    return;
+  }
+  savingLib.value = true;
+  try {
+    const r = await probeLibUrl(url);
+    if (!r.ok) {
+      // **不静默保存一个读不到的地址** —— 否则用户以为配好了，实际列表里什么都没有
+      ElMessage.error(`地址不可用，未保存：${r.error}`);
+      probeOk.value = false;
+      probeError.value = r.error;
+      return;
+    }
+    if (!setLibUrl(url)) {
+      ElMessage.error('浏览器拒绝写入本地设置（可能开了无痕模式）');
+      return;
+    }
+    libUrl.value = url;
+    await ensureLib(true);
+    libInfo.value = libState();
+    ElMessage.success(`已启用：${r.containers} 个柜型、${r.boxes} 种货物`);
+  } catch (e) {
+    ElMessage.error(`启用失败：${(e as Error).message}`);
+  } finally {
+    savingLib.value = false;
+  }
+}
+
+/** 停用 = 清掉地址与缓存。**墓碑刻意保留** —— 那是用户删条目的选择，不该被"停用"顺手抹掉 */
+function doClearLib(): void {
+  clearLib();
+  libUrl.value = '';
+  libUrlInput.value = '';
+  libInfo.value = libState();
+  probeOk.value = false;
+  ElMessage.success('已停用。本地数据没有任何改动');
+}
+
 async function refreshCounts(): Promise<void> {
   const [boxes, containers, plans] = await Promise.all([api.listBoxes(), api.listContainers(), api.listPlans()]);
   counts.value = { boxes: boxes.length, containers: containers.length, plans: plans.length };
+  libInfo.value = libState();
 }
 
 onMounted(refreshCounts);

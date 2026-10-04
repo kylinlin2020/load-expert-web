@@ -398,6 +398,25 @@ watch(() => route.path, () => {
   padding: 26px 0;
 }
 
+/* ───────────── 共享资料库：来自库里的条目 ─────────────
+ *
+ * 库里的条目**只读、且不属于本地数据**，必须一眼能看出来 ——
+ * 否则用户会以为是自己录的，删了又发现它自己长回来。
+ */
+.lib-mark {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: #909399;
+  background: #f0f2f5;
+  border: 1px solid #e4e7ed;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* 抽屉导航：与固定侧边栏同一套深色 */
 .nav-drawer .el-drawer__body {
   padding: 0;

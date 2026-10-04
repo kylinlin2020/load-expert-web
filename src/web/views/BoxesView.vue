@@ -19,7 +19,13 @@
       </div>
       <el-table :data="filteredBoxes" v-loading="loading" border stripe class="only-desktop">
         <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="name" label="名称" min-width="140" />
+        <el-table-column prop="name" label="名称" min-width="140">
+        <!-- 「资料库」标记：来自共享资料库的条目不是本机数据，得一眼看出 -->
+        <template #default="{ row }">
+          {{ row.name }}
+          <span v-if="isFromLib('box', row.id)" class="lib-mark" title="来自共享资料库，不在本机数据里">资料库</span>
+        </template>
+      </el-table-column>
         <el-table-column prop="sku" label="SKU" min-width="110">
           <template #default="{ row }">{{ row.sku || '-' }}</template>
         </el-table-column>
@@ -58,7 +64,7 @@
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm title="确认删除该货物？" @confirm="remove(row)">
+            <el-popconfirm :title="delConfirmTitle(row)" @confirm="remove(row)">
               <template #reference>
                 <el-button size="small" type="danger">删除</el-button>
               </template>
@@ -85,7 +91,10 @@
         </div>
         <div v-for="row in filteredBoxes" :key="row.id" class="mcard">
           <div class="mcard-head">
-            <span class="mcard-lead" style="margin-top: 0">{{ row.name }}</span>
+            <span class="mcard-lead" style="margin-top: 0">
+              {{ row.name }}
+              <span v-if="isFromLib('box', row.id)" class="lib-mark">资料库</span>
+            </span>
             <el-tag v-if="row.sku" size="small" type="info">{{ row.sku }}</el-tag>
           </div>
           <div class="mcard-lead">{{ row.length }} × {{ row.width }} × {{ row.height }}</div>
@@ -110,7 +119,7 @@
           </div>
           <div class="mcard-ops">
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm title="确认删除该货物？" @confirm="remove(row)">
+            <el-popconfirm :title="delConfirmTitle(row)" @confirm="remove(row)">
               <template #reference>
                 <el-button size="small" type="danger">删除</el-button>
               </template>
@@ -306,11 +315,15 @@ import { ElMessage } from 'element-plus';
 import api from '../api/client';
 import type { Box } from '../../types';
 import { SIX_DIRECTION_LABELS } from '../../types';
+import { isFromLib } from '../api/withReferenceLib';
+import { addDeletedId } from '../lib/referenceStore';
 
 const boxes = ref<Box[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
 const editing = ref<Box | null>(null);
+/** 正在编辑的条目是否来自共享资料库（决定保存后的提示文案） */
+const wasFromLib = ref(false);
 const groupFilter = ref('');
 const formTab = ref('basic');
 
@@ -442,6 +455,9 @@ function openCreate() {
 
 function openEdit(row: Box) {
   editing.value = row;
+  // 记下"正在编辑的是不是库里的条目" —— 保存后要给出不同提示。
+  // 必须在编辑**之前**取：保存后同 id 就变成"本地优先"了，再查已查不出
+  wasFromLib.value = isFromLib('box', row.id);
   Object.assign(form, defaultForm(), {
     name: row.name,
     description: row.description ?? '',
@@ -492,10 +508,17 @@ async function submit() {
   try {
     if (editing.value) {
       await api.updateBox(editing.value.id, { ...form });
+      // 编辑的是**库里的**条目 → 已以同 id 存成"你自己的"，从此本地优先。
+      // 不必再提示"库还是旧的"，但说清楚比不说好：否则用户会以为改动同步回去了
+      if (wasFromLib.value) {
+        ElMessage.success('已存为本地版本（这份资料库不会被改动，下次刷新仍在）');
+      } else {
+        ElMessage.success('保存成功');
+      }
     } else {
       await api.createBox({ ...form });
+      ElMessage.success('保存成功');
     }
-    ElMessage.success('保存成功');
     dialogVisible.value = false;
     await refresh();
   } catch (e) {
@@ -503,7 +526,36 @@ async function submit() {
   }
 }
 
+/**
+ * 删除确认框的标题
+ *
+ * **库条目必须换一套说法。**对一条"本机根本没有、只是从库里读出来"的条目
+ * 说"确认删除该货物？"是误导 —— 它删不掉任何东西，只是在本机隐藏。
+ * 用户点确定后发现条目还在，会以为程序有 bug。
+ */
+function delConfirmTitle(row: Box): string {
+  return isFromLib('box', row.id)
+    ? `「${row.name}」来自共享资料库。确定在这台设备上隐藏它？（资料库文件不受影响，其它设备仍会显示）`
+    : '确认删除该货物？';
+}
+
+/**
+ * 删除
+ *
+ * 分两种，因为库里的条目本地并不存在：
+ * - 本地条目 → 真删
+ * - 库里的条目 → 记一个墓碑（本地记下"我不要这条"），
+ *   否则下次拉取它又原样出现，删除看起来没生效
+ *
+ * 确认框已在 `delConfirmTitle` 里把话说清，不再弹第二次
+ */
 async function remove(row: Box) {
+  if (isFromLib('box', row.id)) {
+    addDeletedId('box', row.id);
+    ElMessage.success('已在本机隐藏。资料库文件本身没有改动');
+    await refresh();
+    return;
+  }
   try {
     await api.deleteBox(row.id);
     ElMessage.success('已删除');

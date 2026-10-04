@@ -113,6 +113,16 @@
             </el-table-column>
           </el-table>
           <div class="pick-hint">数量留空 = <strong>不限</strong>，塞满柜子为止</div>
+          <!--
+            本页刻意不显示共享资料库里的条目（原因见 loadBaseData 的注释）。
+            少了东西就要说清楚，否则用户会以为资料库没生效。
+          -->
+          <el-alert v-if="hiddenBoxes > 0 || hiddenContainers > 0" type="info" :closable="false" class="lib-note">
+            <template #title>
+              共享资料库里的 {{ libHiddenText }}没有显示在这里 ——
+              到「柜型管理」或「货物管理」里编辑它一次，就会存成你自己的版本，之后就能在这里选用。
+            </template>
+          </el-alert>
         </el-card>
 
         <el-card shadow="never" header="计算策略" class="mt16">
@@ -587,6 +597,7 @@ import Packing3D from '../components/Packing3D.vue';
 import { setPlanDoc } from '../store/planDoc';
 import { computedFromResult } from '../../model/case';
 import { recordAction } from '../lib/diagnostics';
+import { isFromLib } from '../api/withReferenceLib';
 import { isBetterGroup, mergeGroups, toGroup } from '../lib/containerGroups';
 import {
   buildCartons,
@@ -1006,9 +1017,44 @@ function on3DSelect(boxId: string) {
  */
 let baseDataLoaded = false;
 
+/** 本页筛掉了多少条共享资料库条目（柜型与货物分开计，提示里要说准数字） */
+const hiddenContainers = ref(0);
+const hiddenBoxes = ref(0);
+
+/**
+ * 提示里的那句话
+ *
+ * 用 computed 拼而**不在模板里分段写**：Vue 模板编译器会吃掉元素之间的换行空白，
+ * 分段写会拼出「3 个柜型与4 种货物」这种少空格的结果（实测踩过）。
+ */
+const libHiddenText = computed(() => {
+  const parts: string[] = [];
+  if (hiddenContainers.value > 0) parts.push(`${hiddenContainers.value} 个柜型`);
+  if (hiddenBoxes.value > 0) parts.push(`${hiddenBoxes.value} 种货物`);
+  return parts.length > 1 ? `${parts.join(' 与 ')} ` : parts.length === 1 ? `${parts[0]} ` : '';
+});
+
+/**
+ * 载入柜型与货物主档
+ *
+ * ## 这里刻意把共享资料库的条目**排除掉**
+ *
+ * 不是因为它们不能算，而是**算了会留下隐患**：
+ * 计算会读本地存储来解析货物与柜型（`localClient.resolveItems` /
+ * `getContainerOrThrow` 都只查本地），而一旦库条目被选中，页面不报错、
+ * 直到点「开始计算」才抛 `box not found` —— 界面让你选却算不了。
+ *
+ * 更麻烦的是：保存方案 / 记录案例会把 `lib-xxx` 这个 id 存进去，
+ * 之后一旦停用资料库，那些历史方案就再也解析不出货物了。
+ *
+ * 所以本页只显示本地条目。要用库里的东西，去「柜型管理 / 货物管理」
+ * 编辑它一次 —— 那会把它存成你自己的版本，之后就能在这里正常选用。
+ */
 async function loadBaseData() {
   try {
-    containers.value = await api.listContainers();
+    const all = await api.listContainers();
+    containers.value = all.filter((c) => !isFromLib('container', c.id));
+    hiddenContainers.value = all.length - containers.value.length;
     if (containers.value.length && containerIds.value.length === 0) {
       containerIds.value = [String(containers.value[containers.value.length - 1].id)];
     }
@@ -1017,7 +1063,9 @@ async function loadBaseData() {
   }
   loadingBoxes.value = true;
   try {
-    boxes.value = await api.listBoxes();
+    const all = await api.listBoxes();
+    boxes.value = all.filter((b) => !isFromLib('box', b.id));
+    hiddenBoxes.value = all.length - boxes.value.length;
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
