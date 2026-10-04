@@ -21,11 +21,23 @@ test('种子：首次运行写入三个标准柜型，且与服务端版共用�
   assert.equal(cs.length, SEED_CONTAINERS.length);
   const labels = cs.map((c) => c.label);
   assert.deepEqual(labels, SEED_CONTAINERS.map((s) => s.label));
-  // 具体数值也要一致（避免两个版本初始柜型不同）
-  const hq = cs.find((c) => c.label === '40HQ');
-  assert.equal(hq?.innerLength, 13556);
-  assert.equal(hq?.innerWidth, 2352);
-  assert.equal(hq?.weightCapacity, 26800);
+  // 具体数值也要一致（避免两个版本初始柜型不同）。
+  // 三个柜型逐个断言，不只抽查一个 —— 种子是用户实测值，
+  // 容易被无意改回 ISO 名义值（5898/12032/13556），三个都要盯着。
+  const expect: Record<string, [number, number, number, number]> = {
+    '20GP': [5800, 2340, 2380, 21770],
+    '40GP': [11900, 2340, 2380, 26800],
+    '40HQ': [11900, 2340, 2680, 26800],
+  };
+  for (const [label, [l, w, h, cap]] of Object.entries(expect)) {
+    const c = cs.find((x) => x.label === label);
+    assert.ok(c, `种子应包含 ${label}`);
+    assert.deepEqual(
+      [c.innerLength, c.innerWidth, c.innerHeight, c.weightCapacity],
+      [l, w, h, cap],
+      `${label} 的种子尺寸/载重应与 SEED_CONTAINERS 一致`,
+    );
+  }
 });
 
 test('种子：柜型表非空就不再写种子（用户删掉后不会被塞回来）', async () => {

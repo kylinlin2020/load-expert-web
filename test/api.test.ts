@@ -303,14 +303,14 @@ test('布尔数组列混入数字/错误长度时归一化，不静默算错装�
   await inject('DELETE', `/api/boxes/${id}`);
 });
 
-test('柜型内尺寸必须符合 ISO（40HQ 早期误抄 40GP 的长度）', async () => {
+test('柜型种子内尺寸符合预期（40HQ 不能误用 40GP 的长度）', async () => {
   const items = (await inject('GET', '/api/containers')).json().items;
   const byLabel = Object.fromEntries(items.map((c: { label: string }) => [c.label, c]));
-  // ISO 内尺寸 mm
+  // 与 SEED_CONTAINERS 一致的**实测内尺寸** mm（非 ISO 668 名义值，容积差约 2~3%）
   const expect: Record<string, [number, number, number]> = {
-    '20GP': [5898, 2352, 2393],
-    '40GP': [12032, 2352, 2393],
-    '40HQ': [13556, 2352, 2698],
+    '20GP': [5800, 2340, 2380],
+    '40GP': [11900, 2340, 2380],
+    '40HQ': [11900, 2340, 2680],
   };
   for (const [label, [l, w, h]] of Object.entries(expect)) {
     const c = byLabel[label];
@@ -321,11 +321,22 @@ test('柜型内尺寸必须符合 ISO（40HQ 早期误抄 40GP 的长度）', as
       `${label} 内尺寸应为 ${l}×${w}×${h}，实际 ${c.innerLength}×${c.innerWidth}×${c.innerHeight}`,
     );
   }
-  // 高柜比标准柜长 1524mm，不只是加高
+  // 这套实测尺寸里，40HQ 与 40GP **内长相同**（都是 11900），差别只在内高。
+  // 所以真正要盯的不变量是"高柜只加高、不加长" —— 若哪天有人把 40HQ 的
+  // 内长又抄成 ISO 名义值 13556，这条会立刻失败。
   assert.equal(
-    byLabel['40HQ'].innerLength - byLabel['40GP'].innerLength,
-    1524,
-    '40HQ 内长应比 40GP 多 1524mm',
+    byLabel['40HQ'].innerLength,
+    byLabel['40GP'].innerLength,
+    '40HQ 与 40GP 内长应相同（都是 11900）',
+  );
+  assert.equal(
+    byLabel['40HQ'].innerHeight - byLabel['40GP'].innerHeight,
+    300,
+    '40HQ 内高应比 40GP 高 300mm（2680 vs 2380）',
+  );
+  assert.ok(
+    byLabel['40HQ'].innerLength !== 13556,
+    '40HQ 内长不应是 ISO 名义值 13556 —— 那是本项目早期用过的值',
   );
 });
 

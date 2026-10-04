@@ -45,9 +45,11 @@ export function defaultContainerForm(): ContainerForm {
     name: '',
     label: '',
     description: '',
-    length: 5898,
-    width: 2352,
-    height: 2393,
+    // 与 SEED_CONTAINERS 的 20GP 一致 —— 同一个应用里不该有两个"20GP 尺寸"，
+    // 否则用户会问"为什么种子柜是 5800，新增柜型却预填 5898"
+    length: 5800,
+    width: 2340,
+    height: 2380,
     weightCapacity: 21770,
     dimensionUnit: 'mm',
     weightUnit: 'kg',
