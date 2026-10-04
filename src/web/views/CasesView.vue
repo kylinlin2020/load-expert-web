@@ -47,6 +47,34 @@
           高估的方案发出去是要出事的。请优先核对这类案例的货物尺寸与摆放限制是否录入正确。
         </template>
       </el-alert>
+
+      <!--
+        批量分享（连续累积）：
+        一次把**所有已填实测**的案例拼成一份，发一次就够 ——
+        攒了十条就发十条，不用一条条粘。
+      -->
+      <div class="share-bar">
+        <div class="share-txt">
+          <strong>把这些偏差数据发给作者，算法才能改进</strong>
+          <div class="c-sub">
+            两档都不含货物名称。偏差摘要连尺寸都没有；完整案例保留尺寸（算法改进的原料），
+            但名称 / SKU / 批次 / 单价全部替换成序号。<strong>案例名与备注是你自己写的，会原样带上</strong>。
+          </div>
+        </div>
+        <div class="share-btns">
+          <el-button
+            type="primary"
+            plain
+            :disabled="shareable.length === 0"
+            @click="copyBatch('summary')"
+          >
+            复制全部偏差摘要（{{ shareable.length }} 条）
+          </el-button>
+          <el-button :disabled="shareable.length === 0" @click="copyBatch('full')">
+            复制全部完整案例（{{ shareable.length }} 条）
+          </el-button>
+        </div>
+      </div>
     </el-card>
 
     <!-- ══════════ 列表 ══════════ -->
@@ -97,8 +125,23 @@
                 >{{ signed(deltaOf(c)!) }} 箱</span>
               </td>
               <td class="c-note">{{ c.actual.note || '—' }}</td>
-              <td>
+              <td class="ops">
                 <el-button size="small" @click="openEdit(c)">补录实测</el-button>
+                <!--
+                  两档分享塞进一个下拉而不是两个按钮：
+                  操作列已有「补录实测 + 删除」，再加两个会挤成四列宽。
+                -->
+                <el-dropdown size="small" trigger="click" @command="(t: ShareTier) => copyOne(c, t)">
+                  <el-button size="small" :disabled="!analyze(c).hasActual">
+                    复制分享<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="summary">偏差摘要（无货物信息）</el-dropdown-item>
+                      <el-dropdown-item command="full">完整案例（去货物名称）</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
                 <el-button size="small" type="danger" plain @click="remove(c)">删除</el-button>
               </td>
             </tr>
@@ -138,6 +181,27 @@
       </template>
     </el-dialog>
 
+    <!--
+      剪贴板兜底。
+      `navigator.clipboard` 只在**安全上下文**可用（https 或 localhost），
+      且 `writeText` 还要求文档已获焦点、权限未被拒绝。
+
+      实测：在 localhost 上照样会被拒（页面未获焦点 / 权限被自动拒绝）。
+      所以**这条不是边角情况，是常态** —— 必须留手工复制的路，
+      且**不能断言失败原因**（我第一版写"当前页面不是安全上下文"，
+      而实际就发生在 localhost 上，原因是焦点/权限，文案是错的）。
+    -->
+    <el-dialog v-model="manualVisible" title="请手动复制" width="640px">
+      <el-alert type="info" :closable="false" show-icon class="mb12"
+        title="浏览器没让直接写剪贴板"
+        description="原因可能是页面未获焦点、非 https、或剪贴板权限被拒。下面内容已全选，按 Ctrl+C 即可复制，内容完全一样。" />
+      <el-input v-model="manualText" type="textarea" :rows="16" readonly ref="manualRef" />
+      <template #footer>
+        <el-button type="primary" @click="selectManual">重新全选</el-button>
+        <el-button @click="manualVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <div class="foot">LoadExpert Web · 实测案例</div>
   </div>
 </template>
@@ -155,16 +219,36 @@
  *
  * 需要跟进的排前面：偏差大的最该先看。全对的排最后（说明这种组合算法没问题），
  * 没填实测的排中间（还没产生价值）。
+ *
+ * ## 分享为什么分两档，又为什么只能"用户主动发"
+ *
+ * 静态版**没有任何上报通道**（保存只写本地 IndexedDB，全链路无网络请求），
+ * 所以作者拿不到用户的案例 —— 要拿到，只能由用户主动发。
+ * 分两档是为了让用户**自己决定暴露多少**，作者不替他决定。
+ *
+ * 分界线是"有没有货物清单"，不是"有没有字符串"：
+ * 只给箱数我没法复现算法，**尺寸必须留着**才是改进的原料。
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { ArrowDown } from '@element-plus/icons-vue';
 import api from '../api/client';
 import { analyzeCase, casePriority, summarizeCases, type LoadCase } from '../../model/case';
+import { formatFull, formatFullBatch, formatSummary, formatSummaryBatch } from '../../model/caseShare';
+import { appVersion } from '../../version';
+
+/** 两档分享 */
+type ShareTier = 'summary' | 'full';
 
 const cases = ref<LoadCase[]>([]);
 const editVisible = ref(false);
 const editing = ref<LoadCase | null>(null);
 const form = ref<{ pieces?: number; containers?: number; note: string }>({ note: '' });
+
+/** 剪贴板兜底对话框 */
+const manualVisible = ref(false);
+const manualText = ref('');
+const manualRef = ref<{ textarea?: HTMLTextAreaElement } | null>(null);
 
 const sum = computed(() => summarizeCases(cases.value));
 
@@ -180,6 +264,66 @@ const sorted = computed(() =>
     return b.id - a.id;
   }),
 );
+
+/**
+ * 可分享的案例：已填实测的那些
+ *
+ * 只取有实测的 —— 没填实测的案例发过去只是"我算了 966 箱"，
+ * 对算法改进没有信息量，还会让对方误以为收到了偏差数据。
+ * 沿用 sorted 的顺序（偏差大的在前），与屏幕上看到的顺序一致。
+ */
+const shareable = computed(() => sorted.value.filter((c) => analyzeCase(c).hasActual));
+
+/** 分享文本的头部元信息（版本与时间由本处注入，格式化函数保持纯函数） */
+function shareMeta() {
+  return { appVersion: appVersion.version, at: new Date().toISOString() };
+}
+
+/**
+ * 写剪贴板，失败则弹出手工复制
+ *
+ * `navigator.clipboard` 在非安全上下文里**根本不存在**（不是调用失败，是 undefined），
+ * 故先判存在再调用，否则 `clipboard.writeText` 会抛 TypeError 被当成"权限被拒"，
+ * 提示文案就会误导人往权限方向找原因。
+ */
+async function writeClipboard(text: string, label: string): Promise<void> {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+    await navigator.clipboard.writeText(text);
+    ElMessage.success(`已复制${label}，直接粘贴给作者即可`);
+  } catch {
+    manualText.value = text;
+    manualVisible.value = true;
+    await nextTick();
+    selectManual();
+  }
+}
+
+/** 全选对话框里的文本，让 Ctrl+C 一次带走 */
+function selectManual(): void {
+  const el = manualRef.value?.textarea;
+  if (!el) return;
+  el.focus();
+  el.select();
+}
+
+/** 单条分享 */
+function copyOne(c: LoadCase, tier: ShareTier): void {
+  const text = tier === 'summary' ? formatSummary(c, shareMeta()) : formatFull(c, shareMeta());
+  void writeClipboard(text, tier === 'summary' ? '偏差摘要' : '完整案例');
+}
+
+/** 批量分享：所有已填实测的案例拼成一份 */
+function copyBatch(tier: ShareTier): void {
+  const list = shareable.value;
+  if (list.length === 0) {
+    ElMessage.warning('还没有已填实测的案例 —— 先在列表里点「补录实测」填上现场实际箱数');
+    return;
+  }
+  const text =
+    tier === 'summary' ? formatSummaryBatch(list, shareMeta()) : formatFullBatch(list, shareMeta());
+  void writeClipboard(text, `${tier === 'summary' ? '偏差摘要' : '完整案例'}（${list.length} 条）`);
+}
 
 function analyze(c: LoadCase) {
   return analyzeCase(c);
@@ -258,6 +402,47 @@ onMounted(refresh);
 .c-note { font-size: 12px; color: #606266; max-width: 220px; }
 .nowrap { white-space: nowrap; }
 .empty { text-align: center; color: #909399; padding: 18px 0; }
+
+/* 操作列：三个控件要能挤在一行里 */
+.ops {
+  white-space: nowrap;
+}
+.ops :deep(.el-button + .el-button),
+.ops :deep(.el-dropdown) {
+  margin-left: 6px;
+}
+
+/* ───────────── 分享区 ───────────── */
+
+/*
+ * 独立一块而不是塞进表格下方：它是"攒够了一批一起发"的动作，
+ * 与"逐条查看/补录"是两种节奏，分开摆更清楚。
+ */
+.share-bar {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.share-txt {
+  font-size: 13px;
+  color: #303133;
+  line-height: 1.8;
+}
+
+/* 允许按钮换行：窄屏下两个长按钮挤一行会撑破容器 */
+.share-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.share-btns :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .bad { color: #f56c6c; font-weight: 600; }
 .good { color: #67c23a; font-weight: 600; }
@@ -276,5 +461,7 @@ table.grid thead th { background: #f5f7fa; font-weight: 600; white-space: nowrap
   .stat-num { font-size: 22px; }
   .lead { font-size: 12.5px; }
   table.grid { min-width: 780px; font-size: 12px; }
+  .share-bar { padding: 10px; }
+  .share-btns :deep(.el-button) { flex: 1 1 100%; margin-left: 0; }
 }
 </style>
