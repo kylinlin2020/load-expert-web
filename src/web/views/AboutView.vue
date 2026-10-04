@@ -241,7 +241,9 @@
             <tr>
               <td><strong>纯静态版</strong></td>
               <td><code>npm run build:web:static</code></td>
-              <td>本浏览器 IndexedDB（<code>load-expert</code> 库，boxes / containers / plans 三张表）</td>
+              <td>
+                本浏览器 IndexedDB（<code>load-expert</code> 库，boxes / containers / plans / cases 四张表）
+              </td>
               <td><strong>浏览器内</strong></td>
             </tr>
           </tbody>
@@ -278,6 +280,54 @@
           <code>src/web/lib/containerGroups.ts</code>，有单元测试覆盖。
         </p>
       </div>
+
+      <h3 class="sec">八、反馈与实测</h3>
+
+      <h4>实测案例（改进算法的主要途径）</h4>
+      <ul class="manual">
+        <li>
+          <strong>什么时候该记</strong>：算出 966 箱，现场实际只装到 900 箱 ——
+          这类偏差数据比"界面好不好用"重要得多，装柜有偏差时顺手记一条。
+        </li>
+        <li><strong>怎么记</strong>：装柜计算页算完后点「记录为实测案例」（紧挨「保存方案」）。</li>
+        <li>
+          <strong>实测值什么时候填</strong>：现场装完才知道，所以分两步 ——
+          先记下算法输出，装完后到「实测案例」页补录实际箱数 / 柜数。
+        </li>
+        <li>
+          <strong>柜型存的是快照</strong>，不是引用。之后你调整了柜型尺寸，
+          这条案例仍反映"当时算的时候用的柜子"。
+        </li>
+        <li>
+          <strong>算法输出不可改</strong>：补录实测只写现场那一半，
+          不会篡改程序当时算出的结果 —— 所以两者的差始终可信。
+        </li>
+        <li>
+          <strong>列表按偏差排序</strong>，偏差大的排最前。总览里区分「算法高估」与「算法保守」：
+          高估最要紧，那种方案在现场装不下，发出去是要出事的。
+        </li>
+      </ul>
+
+      <h4>意见反馈</h4>
+      <ul class="manual">
+        <li>
+          <strong>两条路都留着</strong>：「意见反馈」页可复制诊断信息 / 下载诊断包（.json），
+          也可直接提交 GitHub Issue（自动填好标题与正文）。
+        </li>
+        <li>
+          <strong>复制那条最可靠</strong> —— 不需要账号、离线可用。
+          诊断包是无损的，比截图加打字准确得多。
+        </li>
+        <li>
+          <strong>错误与操作轨迹只存在当前页面的内存里</strong>，刷新或关页即消失。
+          发现问题后<strong>先别刷新</strong>，直接去那一页导出。
+        </li>
+        <li>
+          <strong>诊断信息不含业务数据</strong>：没有货物名称、尺寸、柜型等任何字段，
+          只有版本、构建模式、浏览器、数据条数与错误堆栈。
+          要附带具体数据的话，请自己到「数据备份」页导出一份。
+        </li>
+      </ul>
     </el-card>
 
     <div class="foot">LoadExpert Web · Vue 3 + TypeScript 全栈 · 算法引擎与界面均为本项目实现</div>
