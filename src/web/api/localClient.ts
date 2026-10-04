@@ -218,6 +218,25 @@ export function createLocalApi(db?: RowStore): ApiShape {
       await ensureSeeded();
       return importBackup(store.asBackupAdapter(), file, mode);
     },
+
+    // -------------------------------------------------------------------------
+    // 实测案例（算法反馈）
+    // -------------------------------------------------------------------------
+    listCases: () => store.listCases(),
+    getCase: async (id) => {
+      const c = await store.getCase(id);
+      if (!c) throw new LocalApiError(404, 'case not found');
+      return c;
+    },
+    createCase: async (c) => store.insertCase(c),
+    updateCaseActual: async (id, actual) => {
+      const r = await store.updateCaseActual(id, actual);
+      if (!r) throw new LocalApiError(404, 'case not found');
+      return r;
+    },
+    deleteCase: async (id) => {
+      await store.deleteCase(id);
+    },
   };
 }
 

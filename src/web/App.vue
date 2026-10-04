@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Box, Van, Cpu, List, InfoFilled, Fold, Download } from '@element-plus/icons-vue';
+import { Box, Van, Cpu, List, InfoFilled, Fold, Download, DataAnalysis, ChatDotRound } from '@element-plus/icons-vue';
 import { appVersion } from '../version';
 
 const router = useRouter();
@@ -87,6 +87,8 @@ const MENU = [
   // 备份入口放在业务菜单里而不是塞进「应用版本」——
   // 这是**唯一的救命手段**，真出事时用户不该在"关于"里翻找它。
   { index: '/backup', label: '数据备份', icon: Download },
+  { index: '/cases', label: '实测案例', icon: DataAnalysis },
+  { index: '/feedback', label: '意见反馈', icon: ChatDotRound },
   { index: '/about', label: '应用版本', icon: InfoFilled },
 ];
 

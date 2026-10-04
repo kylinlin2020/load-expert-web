@@ -23,12 +23,14 @@
  * 「导出 → 导入 → 再导出」必须完全相等。
  */
 import { buildBackup, type BackupFile, type ImportMode, type BackupPlan } from './backup.js';
+import type { LoadCase } from './case.js';
 import type { Box, Container } from '../types/index.js';
 
 export interface RecordCounts {
   boxes: number;
   containers: number;
   plans: number;
+  cases?: number;
 }
 
 export interface ImportOutcome {
@@ -44,10 +46,14 @@ export interface BackupStoreAdapter {
   listBoxes(): Promise<Box[]>;
   listContainers(): Promise<Container[]>;
   listPlans(): Promise<BackupPlan[]>;
+  /** 实测案例。老适配器可能没实现，故设为可选 */
+  listCases?(): Promise<LoadCase[]>;
   putBox(box: Box): Promise<void>;
   putContainer(container: Container): Promise<void>;
   putPlan(plan: BackupPlan): Promise<void>;
+  putCase?(c: LoadCase): Promise<void>;
   deletePlan(id: number): Promise<boolean>;
+  deleteCase?(id: number): Promise<boolean>;
   /** 清空全部业务数据（覆盖模式用），返回被清掉的行数 */
   clearAll(): Promise<RecordCounts>;
 }
@@ -62,6 +68,8 @@ export async function exportBackup(
     containers: await store.listContainers(),
     // 方案里存着完整计算结果，是文件里最占体积的部分，故可单独排除
     plans: includePlans ? (await store.listPlans()) : [],
+    // 案例必须带 —— 它是算法反馈的载体，丢了就等于把用户积累的实测数据扔了
+    cases: store.listCases ? await store.listCases() : [],
     appVersion,
   });
 }
@@ -103,5 +111,19 @@ export async function importBackup(
     plans++;
   }
 
-  return { mode, written: { boxes, containers, plans }, removed };
+  // 案例同方案：不可变快照（computed 不可改），先删后插
+  let cases = 0;
+  if (file.data.cases && store.putCase) {
+    for (const c of file.data.cases) {
+      if (store.deleteCase) await store.deleteCase(c.id);
+      await store.putCase(c);
+      cases++;
+    }
+  }
+
+  return {
+    mode,
+    written: { boxes, containers, plans, ...(store.putCase ? { cases } : {}) },
+    removed,
+  };
 }

@@ -8,8 +8,15 @@
 import type { Row, RowStore, StoreName } from './rowStore.js';
 
 const DB_NAME = 'load-expert';
-const DB_VERSION = 1;
-const STORE_NAMES: StoreName[] = ['boxes', 'containers', 'plans'];
+/**
+ * 版本 2：新增 `cases` 表（实测案例）。
+ *
+ * IndexedDB 的版本**只能往上升**，所以新增表必须 +1。
+ * 好消息是 `onupgradeneeded` 只创建**不存在**的表，
+ * 已有的 boxes/containers/plans 数据**不受影响** —— 不需要写数据迁移。
+ */
+const DB_VERSION = 2;
+const STORE_NAMES: StoreName[] = ['boxes', 'containers', 'plans', 'cases'];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 

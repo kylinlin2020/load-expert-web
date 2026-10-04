@@ -23,7 +23,19 @@ import {
 } from '../../model/rowMapping.js';
 import type { RowStore, StoreName } from './rowStore.js';
 import type { BackupStoreAdapter } from '../../model/backupApply.js';
+import { rowToCase, type CaseActual, type CaseRow, type LoadCase } from '../../model/case.js';
 import type { PlanRecord } from './types.js';
+
+/** 新增案例的入参（id / createdAt 由存储层分配，备份恢复时才指定） */
+export interface NewCase {
+  name: string;
+  container: LoadCase['container'];
+  boxes: Box[];
+  strategy: number;
+  options?: LoadCase['options'];
+  computed: LoadCase['computed'];
+  actual?: CaseActual;
+}
 
 /** 与 SQLite `datetime('now')` 同格式（YYYY-MM-DD HH:MM:SS，本地时间） */
 function nowSql(): string {
@@ -272,12 +284,71 @@ export class LocalStore {
   }
 
   /** 覆盖式恢复用：清空全部业务数据，返回被清掉的行数 */
-  async clearAll(): Promise<{ boxes: number; containers: number; plans: number }> {
+  async clearAll(): Promise<{ boxes: number; containers: number; plans: number; cases: number }> {
     // 顺序与 SQLite 版一致：**先 plans**，将来若启用外键强制也不会立刻炸
     const plans = await this.db.clear('plans');
+    const cases = await this.db.clear('cases');
     const boxes = await this.db.clear('boxes');
     const containers = await this.db.clear('containers');
-    return { boxes, containers, plans };
+    return { boxes, containers, plans, cases };
+  }
+
+  // -------------------------------------------------------------------------
+  // 实测案例
+  // -------------------------------------------------------------------------
+
+  /** 按 id 倒序（最近记录在前），与 SQLite 的 ORDER BY id DESC 一致 */
+  async listCases(): Promise<LoadCase[]> {
+    const rows = await this.db.all<CaseRow>('cases');
+    return rows.sort((a, b) => b.id - a.id).map(rowToCase);
+  }
+
+  async getCase(id: number): Promise<LoadCase | null> {
+    const row = await this.db.get<CaseRow>('cases', numId(id));
+    return row ? rowToCase(row) : null;
+  }
+
+  async insertCase(c: NewCase, id?: number, createdAt?: string): Promise<LoadCase> {
+    const row = await this.db.put<CaseRow>('cases', {
+      ...(id === undefined ? {} : { id }),
+      name: c.name,
+      container_json: JSON.stringify(c.container),
+      boxes_json: JSON.stringify(c.boxes),
+      strategy: c.strategy,
+      options_json: c.options ? JSON.stringify(c.options) : null,
+      computed_json: JSON.stringify(c.computed),
+      actual_json: JSON.stringify(c.actual ?? {}),
+      created_at: createdAt ?? nowSql(),
+    });
+    return rowToCase(row);
+  }
+
+  /**
+   * 补录 / 修正现场实测值
+   *
+   * 刻意**不接受** computed —— 那是算法当时算的，不可变。
+   */
+  async updateCaseActual(id: number, actual: CaseActual): Promise<LoadCase | null> {
+    const cur = await this.getCase(id);
+    if (!cur) return null;
+    await this.insertCase(
+      {
+        name: cur.name,
+        container: cur.container,
+        boxes: cur.boxes,
+        strategy: cur.strategy,
+        options: cur.options,
+        computed: cur.computed,
+        actual,
+      },
+      cur.id,
+      cur.createdAt,
+    );
+    return this.getCase(id);
+  }
+
+  async deleteCase(id: number): Promise<boolean> {
+    return this.db.remove('cases', numId(id));
   }
 
   // -------------------------------------------------------------------------
@@ -298,6 +369,7 @@ export class LocalStore {
       listBoxes: () => this.listBoxes(),
       listContainers: () => this.listContainers(),
       listPlans: () => this.listPlans(),
+      listCases: () => this.listCases(),
       putBox: async (box: Box) => {
         await this.insertBox(box);
       },
@@ -307,7 +379,26 @@ export class LocalStore {
       putPlan: async (p) => {
         await this.insertPlan({ name: p.name, containerId: p.containerId, boxes: p.boxes, result: p.result }, p.id, p.createdAt);
       },
+      // 用箭头属性而非方法简写：对象字面量的方法里 `this` 指向**对象本身**，
+      // 会被上下文类型成 BackupStoreAdapter，从而找不到类上的 insertCase。
+      // 箭头函数捕获词法作用域的 this（类实例），这才是想要的。
+      putCase: async (c: LoadCase) => {
+        await this.insertCase(
+          {
+            name: c.name,
+            container: c.container,
+            boxes: c.boxes,
+            strategy: c.strategy,
+            options: c.options,
+            computed: c.computed,
+            actual: c.actual,
+          },
+          c.id,
+          c.createdAt,
+        );
+      },
       deletePlan: (id: number) => this.deletePlan(id),
+      deleteCase: (id: number) => this.deleteCase(id),
       clearAll: () => this.clearAll(),
     };
   }

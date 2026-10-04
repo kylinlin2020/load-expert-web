@@ -13,11 +13,12 @@
  * （而真实浏览器里会直接失败）。所以这里照抄那条语义。
  */
 import type { Row, RowStore, StoreName } from '../../src/web/api/rowStore.js';
+import { STORE_NAMES } from '../../src/web/api/rowStore.js';
 
 export function createMemStore(): RowStore {
   const data = new Map<StoreName, Map<number, Row>>();
   const nextId = new Map<StoreName, number>();
-  for (const s of ['boxes', 'containers', 'plans'] as StoreName[]) {
+  for (const s of STORE_NAMES) {
     data.set(s, new Map());
     nextId.set(s, 1);
   }

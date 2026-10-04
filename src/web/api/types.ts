@@ -7,6 +7,7 @@
 import type { Box, Container, LoadOptions, MultiPlanResult, PackResult } from '../../types/index.js';
 import type { BackupFile, ImportMode } from '../../model/backup.js';
 import type { ImportOutcome } from '../../model/backupApply.js';
+import type { CaseActual, CaseComputed, LoadCase } from '../../model/case.js';
 
 /** 装柜方案记录（与后端 plans 表、IndexedDB 的 plans 表都对齐） */
 export interface PlanRecord {
@@ -91,4 +92,24 @@ export interface ApiShape {
    * @param mode `merge` 按 id 对齐、不删除文件外的记录；`replace` 先清空再写入
    */
   importBackup: (file: BackupFile, mode: ImportMode) => Promise<ImportOutcome>;
+
+  /**
+   * 实测案例（算法反馈）
+   *
+   * 与方案分开：案例的价值在「算法输出 vs 现场实测」的对照。
+   * `computed` 由程序填且不可变，`actual` 由用户补录。
+   */
+  listCases: () => Promise<LoadCase[]>;
+  getCase: (id: number) => Promise<LoadCase>;
+  createCase: (c: {
+    name: string;
+    container: Container;
+    boxes: Box[];
+    strategy: number;
+    options?: LoadOptions;
+    computed: CaseComputed;
+    actual?: CaseActual;
+  }) => Promise<LoadCase>;
+  updateCaseActual: (id: number, actual: CaseActual) => Promise<LoadCase>;
+  deleteCase: (id: number) => Promise<void>;
 }

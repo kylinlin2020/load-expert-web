@@ -24,6 +24,24 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     base: isStatic ? './' : '/',
+
+    /**
+     * 「提交 Issue」用的仓库地址
+     *
+     * 刻意给一个默认值而不是只读 `VITE_ISSUE_REPO`：
+     * 后者只能来自 `.env`，而 `.env` 已 gitignore —— 那样**部署出去的静态版
+     * 会永远拿不到地址，Issue 按钮一直是灰的**，等于这个功能上线即失效。
+     *
+     * 用 `define` 注入而非 `import.meta.env` 的原因：Vite 只把 `.env` 里的
+     * `VITE_*` 暴露给 `import.meta.env`，而 CI 里没有 `.env`。
+     * `define` 是构建期字面量替换，CI / 本地 / fork 都能生效。
+     * 需要指向自己仓库时用环境变量 `VITE_ISSUE_REPO` 覆盖即可。
+     */
+    define: {
+      'import.meta.env.VITE_ISSUE_REPO': JSON.stringify(
+        process.env.VITE_ISSUE_REPO ?? 'https://github.com/kylinlin2020/load-expert-web',
+      ),
+    },
     server: {
       port: 5173,
       host: true,

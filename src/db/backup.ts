@@ -16,6 +16,9 @@ import {
   listBoxes,
   listContainers,
   listPlans,
+  listCases,
+  insertCase,
+  deleteCase,
   updateBox,
   updateContainer,
   type NewBox,
@@ -27,6 +30,7 @@ import {
   type ImportOutcome,
 } from '../model/backupApply.js';
 import type { BackupFile, ImportMode } from '../model/backup.js';
+import type { LoadCase } from '../model/case.js';
 import type { Box, Container } from '../types/index.js';
 
 /** 领域对象 → 入库参数（去掉 id 与 quantity：前者按 id 单独写入，后者由计算时的 items 决定） */
@@ -74,6 +78,7 @@ export function sqliteBackupAdapter(db: DatabaseSync): BackupStoreAdapter {
     listBoxes: async () => listBoxes(db),
     listContainers: async () => listContainers(db),
     listPlans: async () => listPlans(db),
+    listCases: async () => listCases(db),
 
     async putBox(box: Box) {
       const id = Number(box.id);
@@ -99,7 +104,25 @@ export function sqliteBackupAdapter(db: DatabaseSync): BackupStoreAdapter {
       );
     },
 
+    async putCase(c: LoadCase) {
+      insertCase(
+        db,
+        {
+          name: c.name,
+          container: c.container,
+          boxes: c.boxes,
+          strategy: c.strategy,
+          options: c.options,
+          computed: c.computed,
+          actual: c.actual,
+        },
+        c.id,
+        c.createdAt,
+      );
+    },
+
     deletePlan: async (id: number) => deletePlan(db, id),
+    deleteCase: async (id: number) => deleteCase(db, id),
     clearAll: async () => clearAll(db),
   };
 }

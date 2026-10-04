@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import type { Box, Container, PackResult } from '../types/index.js';
+import type { Box, Container, LoadOptions, PackResult } from '../types/index.js';
 import {
   parseBoolArr,
   parseNumArr,
@@ -25,6 +25,7 @@ import {
   type ContainerRow,
   type PlanRow,
 } from '../model/rowMapping.js';
+import { rowToCase, type CaseComputed, type CaseActual, type CaseRow, type LoadCase } from '../model/case.js';
 
 /**
  * 行↔领域对象的映射（`rowToBox` / `rowToContainer` / `rowToPlan`）与种子数据
@@ -112,6 +113,21 @@ export function migrate(db: DatabaseSync): void {
       container_id INTEGER NOT NULL REFERENCES containers(id),
       boxes_json TEXT NOT NULL,
       result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 实测案例（算法反馈）。刻意与 plans 分开：案例的价值在于
+    -- "算法输出 vs 现场实测"的对照，plans 只有算法输出那半边。
+    -- 柜型存快照而非 id 引用，用户事后改柜型不会篡改历史案例。
+    CREATE TABLE IF NOT EXISTS cases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      container_json TEXT NOT NULL,
+      boxes_json TEXT NOT NULL,
+      strategy INTEGER NOT NULL DEFAULT 3,
+      options_json TEXT,
+      computed_json TEXT NOT NULL,
+      actual_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -580,6 +596,79 @@ export function insertPlan(db: DatabaseSync, p: NewPlan, id?: number, createdAt?
     id,
   );
   return getPlan(db, id2)!;
+}
+
+// ---------------------------------------------------------------------------
+// 实测案例 CRUD
+//
+// 与方案分开存放：案例的价值在「算法输出 vs 现场实测」的对照，
+// 而 plans 只有算法输出那半边。柜型存快照，用户事后改柜型不篡改历史。
+// ---------------------------------------------------------------------------
+
+const CASE_COLS = [
+  'name', 'container_json', 'boxes_json', 'strategy',
+  'options_json', 'computed_json', 'actual_json',
+];
+
+function caseVals(c: NewCase): unknown[] {
+  return [
+    c.name,
+    JSON.stringify(c.container),
+    JSON.stringify(c.boxes),
+    c.strategy,
+    c.options ? JSON.stringify(c.options) : null,
+    JSON.stringify(c.computed),
+    JSON.stringify(c.actual ?? {}),
+  ];
+}
+
+export interface NewCase {
+  name: string;
+  container: LoadCase['container'];
+  boxes: Box[];
+  strategy: number;
+  options?: LoadOptions;
+  computed: CaseComputed;
+  actual?: CaseActual;
+}
+
+export function listCases(db: DatabaseSync): LoadCase[] {
+  const rows = db.prepare('SELECT * FROM cases ORDER BY id DESC').all() as unknown as CaseRow[];
+  return rows.map(rowToCase);
+}
+
+export function getCase(db: DatabaseSync, id: number): LoadCase | null {
+  const row = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as CaseRow | undefined;
+  return row ? rowToCase(row) : null;
+}
+
+/**
+ * 新增案例
+ * @param id / createdAt 省略时自增/取当前时间；指定时按给定值写入（**仅备份恢复用**）
+ */
+export function insertCase(db: DatabaseSync, c: NewCase, id?: number, createdAt?: string): LoadCase {
+  const cols = createdAt === undefined ? CASE_COLS : [...CASE_COLS, 'created_at'];
+  const vals = createdAt === undefined ? caseVals(c) : [...caseVals(c), createdAt];
+  const id2 = insertRow(db, 'cases', cols, vals, id);
+  return getCase(db, id2)!;
+}
+
+/**
+ * 补录 / 修正现场实测值
+ *
+ * 案例的 `computed` 是不可变的（那是算法当时算的），只有 `actual` 可改 ——
+ * 所以这里刻意**不接受** computed 参数。
+ */
+export function updateCaseActual(db: DatabaseSync, id: number, actual: CaseActual): LoadCase | null {
+  const cur = getCase(db, id);
+  if (!cur) return null;
+  db.prepare('UPDATE cases SET actual_json = ? WHERE id = ?').run(JSON.stringify(actual), id);
+  return getCase(db, id);
+}
+
+export function deleteCase(db: DatabaseSync, id: number): boolean {
+  const r = db.prepare('DELETE FROM cases WHERE id = ?').run(id);
+  return Number(r.changes) > 0;
 }
 
 /**

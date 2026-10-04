@@ -20,9 +20,9 @@
  */
 
 /** 表名（与 SQLite / IndexedDB 的 object store 同名） */
-export type StoreName = 'boxes' | 'containers' | 'plans';
+export type StoreName = 'boxes' | 'containers' | 'plans' | 'cases';
 
-export const STORE_NAMES: readonly StoreName[] = ['boxes', 'containers', 'plans'];
+export const STORE_NAMES: readonly StoreName[] = ['boxes', 'containers', 'plans', 'cases'];
 
 /** 带自增数值 id 的行 */
 export interface Row {

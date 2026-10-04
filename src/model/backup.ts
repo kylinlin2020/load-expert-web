@@ -20,7 +20,8 @@
  *
  * 由 `test/backup.test.ts` 的「导出→导入→再导出 必须完全相等」锁住这个不变式。
  */
-import type { Box, Container, PackResult } from '../types/index.js';
+import type { Box, Container, LoadOptions, PackResult } from '../types/index.js';
+import type { LoadCase } from './case.js';
 
 /** 格式标识。改动任何字段语义都必须 +1，否则老备份会被新代码误读。 */
 export const BACKUP_FORMAT = 'load-expert-backup';
@@ -59,6 +60,14 @@ export interface BackupFile {
     boxes: Box[];
     containers: Container[];
     plans: BackupPlan[];
+    /**
+     * 实测案例。**可选** —— 老备份里没有这一项。
+     *
+     * 刻意**不升格式版本**：cases 是后加的独立表，把它设为可选字段，
+     * 旧备份照样能导入（缺的当空数组），不必写 v1→v2 的迁移分支。
+     * 反过来，升版本会让**所有**旧备份在新代码下报"版本无法识别"。
+     */
+    cases?: LoadCase[];
   };
 }
 
@@ -78,17 +87,24 @@ export function buildBackup(input: {
   boxes: Box[];
   containers: Container[];
   plans: BackupPlan[];
+  cases?: LoadCase[];
   appVersion: string;
   exportedAt?: string;
 }): BackupFile {
-  const { boxes, containers, plans } = input;
+  const { boxes, containers, plans, cases } = input;
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: input.exportedAt ?? new Date().toISOString(),
     appVersion: input.appVersion,
     counts: { boxes: boxes.length, containers: containers.length, plans: plans.length },
-    data: { boxes, containers, plans },
+    data: {
+      boxes,
+      containers,
+      plans,
+      // 空数组也写出来：让"导出过、确实是 0 条"与"老备份没有这一项"可区分
+      ...(cases ? { cases } : {}),
+    },
   };
 }
 
@@ -251,6 +267,44 @@ function parsePlan(raw: unknown, i: number): BackupPlan {
 }
 
 /**
+ * 一条案例记录
+ *
+ * 案例里的 `container` / `boxes` 已经是**领域对象**（不是行），
+ * 所以这里直接复用货物/柜型的解析器，保证格式一致 ——
+ * 不要为案例另写一套字段映射，那必然会和主数据层漂移。
+ */
+function parseCase(raw: unknown, i: number): LoadCase {
+  const o = needObj(raw, `案例第 ${i + 1} 条`);
+  const at = (k: string) => `案例第 ${i + 1} 条（${needStr(o.name, `案例第 ${i + 1} 条的名称`)}）的 ${k}`;
+  const computed = needObj(o.computed, at('算法输出'));
+  const actual = o.actual === undefined || o.actual === null ? {} : needObj(o.actual, at('现场实测'));
+
+  return {
+    id: Number(needId(o.id, at('id'))),
+    name: needStr(o.name, at('name')),
+    createdAt: needStr(o.createdAt, at('记录时间')),
+    container: parseContainer(o.container, 0),
+    boxes: needArr(o.boxes, at('货物清单')).map(parseBox),
+    strategy: needNum(o.strategy, at('策略'), 3),
+    options: o.options === undefined || o.options === null ? undefined : (o.options as LoadOptions),
+    computed: {
+      pieces: needNum(computed.pieces, at('算法输出的箱数')),
+      loadRate: needNum(computed.loadRate, at('算法输出的装载率'), 0),
+      containers: needNum(computed.containers, at('算法输出的柜数'), 1),
+      totalWeight: needNum(computed.totalWeight, at('算法输出的总重'), 0),
+      usedVolume: needNum(computed.usedVolume, at('算法输出的体积'), 0),
+      allPacked: computed.allPacked === true,
+      remaining: needArr(computed.remaining, at('剩余清单')).map((r) => needObj(r, at('剩余项')) as never),
+    },
+    actual: {
+      pieces: actual.pieces === undefined ? undefined : needNum(actual.pieces, at('现场实际箱数')),
+      containers: actual.containers === undefined ? undefined : needNum(actual.containers, at('现场实际柜数')),
+      note: needStr(actual.note, at('备注')) || undefined,
+    },
+  };
+}
+
+/**
  * 解析并校验备份文件**文本**
  * @throws BackupFormatError（消息已面向使用者，可直接显示）
  */
@@ -295,11 +349,14 @@ export function validateBackup(root: unknown): BackupFile {
   const boxes = needArr(data.boxes, 'data.boxes').map(parseBox);
   const containers = needArr(data.containers, 'data.containers').map(parseContainer);
   const plans = needArr(data.plans, 'data.plans').map(parsePlan);
+  // cases 是可选的：老备份没有这一项，按空数组处理
+  const cases = data.cases === undefined ? [] : needArr(data.cases, 'data.cases').map(parseCase);
 
   // id 重复会让「按 id 合并」变成不确定行为，必须提前拦下
   assertUniqueIds(boxes, '货物');
   assertUniqueIds(containers, '柜型');
   assertUniqueIds(plans, '方案');
+  assertUniqueIds(cases, '案例');
 
   return {
     format: BACKUP_FORMAT,
@@ -307,7 +364,7 @@ export function validateBackup(root: unknown): BackupFile {
     exportedAt: needStr(o.exportedAt, '导出时间'),
     appVersion: needStr(o.appVersion, '应用版本', '未知'),
     counts: { boxes: boxes.length, containers: containers.length, plans: plans.length },
-    data: { boxes, containers, plans },
+    data: { boxes, containers, plans, cases },
   };
 }
 

@@ -464,7 +464,8 @@ test('空库导出/导入不报错', async () => {
   const parsed = parseBackup(throughFile(empty));
   const store = new LocalStore(createMemStore());
   const outcome = await importBackup(store.asBackupAdapter(), parsed, 'merge');
-  assert.deepEqual(outcome.written, { boxes: 0, containers: 0, plans: 0 });
+  // 含 cases —— 案例是算法反馈的载体，导入导出都必须如实报告它的条数
+  assert.deepEqual(outcome.written, { boxes: 0, containers: 0, plans: 0, cases: 0 });
 });
 
 test('适配器：SQLite 与 IndexedDB 的方法集一致（少一个就静默漏数据）', () => {

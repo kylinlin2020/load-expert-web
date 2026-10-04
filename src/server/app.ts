@@ -39,9 +39,16 @@ import {
   getPlan,
   insertPlan,
   deletePlan,
+  listCases,
+  getCase,
+  insertCase,
+  updateCaseActual,
+  deleteCase,
   type NewBox,
   type NewContainer,
+  type NewCase,
 } from '../db/index.js';
+import type { CaseActual } from '../model/case.js';
 import { exportBackupSqlite, importBackupSqlite } from '../db/backup.js';
 import { validateBackup, type BackupFile } from '../model/backup.js';
 import { appVersion } from '../version.js';
@@ -397,6 +404,48 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
     }
     const outcome = await importBackupSqlite(db, file, mode);
     return reply.send(outcome);
+  });
+
+  // ── 实测案例（算法反馈）─────────────────────────────────────────────────────
+  app.get('/api/cases', async () => {
+    return { items: listCases(db) };
+  });
+
+  app.get('/api/cases/:id', async (request, reply) => {
+    const c = getCase(db, parseId((request.params as { id: string }).id));
+    if (!c) return reply.status(404).send({ error: 'case not found' });
+    return c;
+  });
+
+  app.post('/api/cases', async (request, reply) => {
+    const b = request.body as Partial<NewCase> & { computed?: unknown };
+    if (!b || typeof b.name !== 'string' || !b.name.trim() || !b.container || !Array.isArray(b.boxes) || !b.computed) {
+      return reply.status(400).send({ error: 'name/container/boxes/computed are required' });
+    }
+    const created = insertCase(db, {
+      name: b.name.trim(),
+      container: b.container as NewCase['container'],
+      boxes: b.boxes as Box[],
+      strategy: Number.isInteger(b.strategy) ? (b.strategy as number) : 3,
+      options: b.options as LoadOptions | undefined,
+      computed: b.computed as NewCase['computed'],
+      actual: (b.actual as NewCase['actual']) ?? {},
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.put('/api/cases/:id/actual', async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    const actual = (request.body ?? {}) as CaseActual;
+    const updated = updateCaseActual(db, id, actual ?? {});
+    if (!updated) return reply.status(404).send({ error: 'case not found' });
+    return updated;
+  });
+
+  app.delete('/api/cases/:id', async (request, reply) => {
+    const ok = deleteCase(db, parseId((request.params as { id: string }).id));
+    if (!ok) return reply.status(404).send({ error: 'case not found' });
+    return reply.status(204).send();
   });
 
   return app;

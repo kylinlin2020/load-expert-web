@@ -349,6 +349,11 @@
 
             <div class="mt12">
               <el-button type="success" :disabled="!containerId" @click="openSave">保存方案</el-button>
+              <!--
+                紧挨着「保存方案」：两个动作服务同一个场景（算完 → 去现场），
+                放一起用户才想得起来。位置刻意紧邻，单独放一个角落等于没有。
+              -->
+              <el-button :disabled="!result" @click="recordCase">记录为实测案例</el-button>
               <el-button :disabled="!result" @click="openReport('report')">导出装柜报表 PDF</el-button>
               <el-button :disabled="stepRows.length === 0" @click="openReport('steps')">导出装柜步骤 PDF</el-button>
               <el-button :disabled="cartons.length === 0" @click="exportCoords">导出逐箱坐标 CSV</el-button>
@@ -543,6 +548,22 @@
         <el-button type="primary" @click="doSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 记录为实测案例：与「保存方案」并列，因为它服务的是同一个场景（算完→去现场） -->
+    <el-dialog v-model="caseVisible" title="记录为实测案例" width="480px">
+      <el-alert type="info" :closable="false" show-icon class="mb8"
+        title="这是给算法积累改进依据的"
+        description="会记下这次的柜型、货物、数量、策略与算法输出。现场装完后，请到「实测案例」页补录实际装了多少箱 —— 两者的差就是算法需要改进的地方。" />
+      <el-form label-width="80px">
+        <el-form-item label="案例名称">
+          <el-input v-model="caseName" placeholder="留空则用日期命名" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="caseVisible = false">取消</el-button>
+        <el-button type="primary" @click="doRecordCase">记录</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -564,6 +585,8 @@ import type {
 import { expandResult } from '../../algorithm/expand';
 import Packing3D from '../components/Packing3D.vue';
 import { setPlanDoc } from '../store/planDoc';
+import { computedFromResult } from '../../model/case';
+import { recordAction } from '../lib/diagnostics';
 import { isBetterGroup, mergeGroups, toGroup } from '../lib/containerGroups';
 import {
   buildCartons,
@@ -786,6 +809,9 @@ const result = ref<PackResult | null>(null);
 const rejectedList = ref<Array<{ boxId: string; reason: string }>>([]);
 const saveVisible = ref(false);
 const planName = ref('');
+/** 「记录为实测案例」对话框 */
+const caseVisible = ref(false);
+const caseName = ref('');
 
 /** 明细区激活 tab */
 const detailTab = ref<'load' | 'layers' | 'rejected'>('load');
@@ -1439,6 +1465,60 @@ async function doSave() {
     });
     ElMessage.success('方案已保存');
     saveVisible.value = false;
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  }
+}
+
+/**
+ * 记录为实测案例
+ *
+ * ## 为什么放在「保存方案」旁边而不是别的页面
+ *
+ * 用户的动作是"刚算完一次，接着去现场装"。所以入口必须在**算完的那一刻**，
+ * 让他在现场之前顺手记一条 —— 事后回忆"当时算的是多少箱"是记不出来的。
+ *
+ * ## 只记算法输出，实测值留给用户后补
+ *
+ * 现场装完才知道实际箱数。所以这里只把「输入快照 + 算法输出」存下来，
+ * 实测值回「实测案例」页补录。分成两步是因为它们发生在不同时间、
+ * 不同地点，硬凑成一个表单反而会让人嫌麻烦不填。
+ */
+async function recordCase() {
+  if (!result.value || containerId.value == null) {
+    ElMessage.warning('没有可记录的计算结果');
+    return;
+  }
+  const c = selectedContainers.value[0];
+  if (!c) {
+    ElMessage.warning('缺少柜型信息');
+    return;
+  }
+  caseName.value = '';
+  caseVisible.value = true;
+}
+
+/** 柜数：多柜模式下是循环装出来的柜数，单柜模式恒为 1 */
+function caseContainerCount(): number {
+  const n = multiResult.value?.plans?.length ?? 0;
+  return n > 0 ? n : 1;
+}
+
+async function doRecordCase() {
+  const c = selectedContainers.value[0];
+  if (!c || !result.value) return;
+  try {
+    await api.createCase({
+      name: caseName.value.trim() || `案例_${new Date().toISOString().slice(0, 10)}`,
+      container: c,
+      boxes: selectedBoxes(),
+      strategy: strategy.value,
+      options: options.value,
+      computed: computedFromResult(result.value, caseContainerCount()),
+      actual: {},
+    });
+    ElMessage.success('已记录。现场装完后请到「实测案例」补录实际箱数');
+    caseVisible.value = false;
   } catch (e) {
     ElMessage.error((e as Error).message);
   }

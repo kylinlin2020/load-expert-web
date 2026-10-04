@@ -4,6 +4,11 @@ interface ImportMetaEnv {
   /** 后端 API 基础地址，可通过 .env 中的 VITE_API_BASE 覆盖，默认 http://localhost:3000 */
   readonly VITE_API_BASE?: string;
   /**
+   * 提交 Issue 用的仓库地址，形如 `https://github.com/<owner>/<repo>`。
+   * 未配置时反馈页的「提交 Issue」置灰，只保留复制诊断信息那条路。
+   */
+  readonly VITE_ISSUE_REPO?: string;
+  /**
    * 构建模式：`static` = 纯静态版（无后端，数据存 IndexedDB）
    *
    * 由 `vite build --mode static` 决定，**不需要额外设环境变量**

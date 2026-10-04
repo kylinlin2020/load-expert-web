@@ -113,6 +113,29 @@ async function run(): Promise<void> {
         ? '=== 通过：柜型尺寸可修改并已持久化 ==='
         : '=== 失败：柜型尺寸改不动（表单载荷字段名问题）===',
     );
+
+    // 实测案例：IndexedDB 从 v1 升到 v2 新增了 cases 表，这一步同时验两件事 ——
+    // 升级没把已有数据搞坏，以及案例的增/改/查在真浏览器里正常
+    const before = (await api.listCases()).length;
+    const cse = await api.createCase({
+      name: '__冒烟验证案例__',
+      container: c,
+      boxes: [b1],
+      strategy: 3,
+      computed: { pieces: r.pieces, loadRate: r.loadRate, containers: 1, totalWeight: r.totalWeight, usedVolume: r.usedVolume, allPacked: true, remaining: [] },
+      actual: {},
+    });
+    const withActual = await api.updateCaseActual(cse.id, { pieces: 900, note: '__冒烟__' });
+    const after = await api.listCases();
+    p(`案例往返：新增后共 ${after.length} 条（改前 ${before}），补录实测 ${withActual.actual.pieces} 箱`);
+    p(`算法输出未被改动：${withActual.computed.pieces}（应为 ${r.pieces}）`);
+    p(
+      after.some((x) => x.id === cse.id) && withActual.computed.pieces === r.pieces
+        ? '=== 通过：实测案例可增改查，且 computed 不可变 ==='
+        : '=== 失败：实测案例异常 ===',
+    );
+    await api.deleteCase(cse.id);
+    p(`清理后剩 ${(await api.listCases()).length} 条`);
   } finally {
     // 无论成败都清掉，避免污染冒烟验证用户的 IndexedDB
     await api.deleteBox(b1.id);

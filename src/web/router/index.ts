@@ -5,6 +5,8 @@ import CalculateView from '../views/CalculateView.vue';
 import PlansView from '../views/PlansView.vue';
 import ReportView from '../views/ReportView.vue';
 import BackupView from '../views/BackupView.vue';
+import CasesView from '../views/CasesView.vue';
+import FeedbackView from '../views/FeedbackView.vue';
 import AboutView from '../views/AboutView.vue';
 import { IS_STATIC_BUILD } from '../api/client';
 
@@ -43,6 +45,8 @@ const router = createRouter({
     { path: '/report', component: ReportView, meta: { title: '装柜报表' } },
     { path: '/plans', component: PlansView, meta: { title: '方案列表' } },
     { path: '/backup', component: BackupView, meta: { title: '数据备份' } },
+    { path: '/cases', component: CasesView, meta: { title: '实测案例' } },
+    { path: '/feedback', component: FeedbackView, meta: { title: '意见反馈' } },
     { path: '/about', component: AboutView, meta: { title: '应用版本' } },
   ],
 });
