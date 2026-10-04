@@ -31,7 +31,7 @@ export interface CaseComputed {
   pieces: number;
   /** 装载率 0~1 */
   loadRate: number;
-  /** 用了几���柜（单柜模式恒为 1） */
+  /** 用了几个柜（单柜模式恒为 1） */
   containers: number;
   /** 总重量 kg */
   totalWeight: number;

@@ -56,8 +56,17 @@
         show-icon
         :closable="false"
         title="数据保存在本浏览器的 IndexedDB 中，没有服务器副本"
-        description="换浏览器、换电脑、换域名都看不到这份数据。清除浏览器数据 / 站点数据 / 用无痕窗口，都会让录入的货物、柜型、方案**全部丢失且无法恢复**。请只在一个固定浏览器里使用。"
-      />
+      >
+        <!--
+          用默认插槽而不是 description 属性：description 是**纯字符串**，
+          里面的 markdown 不会被渲染，`**` 会原样显示给用户。
+          这一条尤其不该出错 —— 它是数据丢失警告，字面星号会让警告的可信度打折。
+        -->
+        <template #default>
+          换浏览器、换电脑、换域名都看不到这份数据。清除浏览器数据 / 站点数据 / 用无痕窗口，
+          都会让录入的货物、柜型、方案<strong>全部丢失且无法恢复</strong>。请只在一个固定浏览器里使用。
+        </template>
+      </el-alert>
 
       <div class="tbl-scroll">
         <table class="kv mt12">

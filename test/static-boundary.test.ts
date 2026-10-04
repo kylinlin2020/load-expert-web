@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
  *
  * 写死某个开发机的绝对路径在本机能跑，**换到 Linux / GitHub Actions 立刻失败** ——
  * 而这三条边界检查恰恰必须在 CI 里跑（它们守的正是"静态产物能不能独立部署"）。
- * 往上找 package.json 与 cwd、tsc 输出布局（源码在 test/、编译后�� dist/test/）、
+ * 往上找 package.json 与 cwd、tsc 输出布局（源码在 test/、编译后到 dist/test/）、
  * 操作系统都无关。
  */
 function findRepoRoot(startDir: string): string {
@@ -44,12 +44,19 @@ function relOf(abs: string): string {
   return abs.replace(ROOT + '/', '').replace(ROOT + '\\', '');
 }
 
-function walk(dir: string, out: string[] = []): string[] {
+/**
+ * 递归收集指定扩展名的文件
+ *
+ * @param ext 扩展名正则片段，默认源码那三种。
+ *             编码检查要额外带上 .html（dev-static-check.html 是会被人打开的产物），
+ *             故做成参数而不是写死 —— 否则注释与实现会对不上。
+ */
+function walk(dir: string, ext = /\.(ts|vue|mjs)$/, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) {
-      walk(p, out);
-    } else if (/\.(ts|vue|mjs)$/.test(name)) {
+      walk(p, ext, out);
+    } else if (ext.test(name)) {
       out.push(p);
     }
   }
@@ -115,11 +122,17 @@ test('两个数据实现都实现了完整的 ApiShape 方法集', async () => {
   const { createLocalApi } = await import('../src/web/api/localClient.js');
   const { createMemStore } = await import('./helpers/memAdapter.js');
 
+  // 手工列举：`ApiShape` 是 interface，编译后被擦除，运行时枚举不出来，
+  // 所以这份列表只能手写 —— 也因此**每次给 ApiShape 加方法都要同步加到这里**。
+  // 忘了的后果正是这条测试要防的：新方法没人实现，页面点过去才报
+  // "api.xxx is not a function"，而 CI 一路绿灯。
   const required = [
     'health', 'listBoxes', 'createBox', 'updateBox', 'deleteBox',
     'listContainers', 'createContainer', 'updateContainer', 'deleteContainer',
     'calculate', 'calculateMulti',
     'listPlans', 'getPlan', 'createPlan', 'deletePlan',
+    // 实测案例（2026-10 起）
+    'listCases', 'getCase', 'createCase', 'updateCaseActual', 'deleteCase',
   ] as const;
 
   const local = createLocalApi(createMemStore());
@@ -129,4 +142,53 @@ test('两个数据实现都实现了完整的 ApiShape 方法集', async () => {
   assert.deepEqual(missingLocal, [], 'localApi 缺少方法');
   assert.equal(httpApi.isLocal, false);
   assert.equal(local.isLocal, true);
+});
+
+/**
+ * 源码里不许有 U+FFFD 替换字符
+ *
+ * ## 为什么这条值得单独一条测试
+ *
+ * U+FFFD 出现的唯一原因是：**某个中文字节的编码在写入时被打乱了**。
+ * 它编译得过、测试跑得过、构建也过 —— 所有工具都把它当成一个合法字符，
+ * 所以**没有任何环节会拦住它**，只能上线后由用户在界面上看见。
+ *
+ * 本项目踩过一次：4 个文件里各有一处，其中一处是**用户可见文案**
+ * （"界面上那点问题不会" 变成了三个替换字符连在一起的样子）。
+ * 如果没有这次人工排查，它会静静躺在 GitHub Pages 上。
+ *
+ * 故用自动检查兜住 —— 代价极小，覆盖的是一类"其它手段全都漏掉"的缺陷。
+ */
+test('源码里不许有 U+FFFD 替换字符（编码损坏的哨兵）', () => {
+  /**
+   * 用码点构造而不是字面字符 —— **哨兵文件不能包含哨兵**。
+   *
+   * 第一版直接写了字面的 U+FFFD，于是这条测试把自己判成违规（5 处），
+   * 自己也一起红了。凡是"扫描某字符是否出现"的检查都得注意这一点：
+   * 判定用的那个字符必须以代码点构造出来，否则会自我触发。
+   *
+   * 也不用 6 字符的转义写法（反斜杠 u F F F D）：它在 JSON / 命令行 / 编辑器之间
+   * 反复转手，有可能在某一步被真的解成字符再写回文件，等于绕回同一个坑。
+   */
+  const BAD = String.fromCharCode(0xfffd);
+
+  // 连 .html 一起扫：dev-static-check.html 也是会被人打开的产物
+  const dirs = [join(ROOT, 'src'), join(ROOT, 'test'), join(ROOT, 'scripts')];
+  const files = dirs.flatMap((d) => (existsSync(d) ? walk(d, /\.(ts|vue|mjs|html)$/) : []));
+  assert.ok(files.length > 0, '应至少扫到一些文件');
+
+  const offenders: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(f, 'utf8');
+    if (!text.includes(BAD)) continue;
+    // 报出**行号**：否则只给文件名，定位还得靠肉眼翻
+    text.split('\n').forEach((line, i) => {
+      if (line.includes(BAD)) offenders.push(`${relOf(f)}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `以下位置有 U+FFFD（编码损坏，界面会显示成替换符号）：\n${offenders.join('\n')}`,
+  );
 });
