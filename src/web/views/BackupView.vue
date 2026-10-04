@@ -121,6 +121,81 @@
         拿到链接的人能读到柜型与货物规格 —— 柜型尺寸本就是 ISO 公开标准，
         货物规格是否敏感你自己判断。
       </p>
+
+      <!--
+        部署指南折叠起来：这个内容只有"要建资料库"的人需要，
+        而多数人只是来导出备份的，平铺开会把这一块撑得很长。
+      -->
+      <el-collapse class="mt12">
+        <el-collapse-item title="没有可用的地址？这里有免费且能自行部署的方案" name="howto">
+          <p class="hint">
+            <strong>网盘大多不行</strong> —— 浏览器跨域读文件要求对方返回
+            <code>Access-Control-Allow-Origin</code>，实测百度盘 / 阿里云盘 /
+            Google Drive 都不带，浏览器会直接拦下响应（文件其实下载到了，
+            只是脚本拿不到，很容易误判成"网盘坏了"）。
+            另外 Google Drive 的 <code>/file/d/&lt;ID&gt;/view</code> 返回的是
+            HTML 预览页，根本不是文件内容。
+          </p>
+          <p class="hint">
+            <strong>放在公开仓库里能用，但不叫"不公开"</strong> ——
+            仓库是公开的，任何人翻一下就能读到你的货物规格。
+          </p>
+
+          <div class="howto">
+            <div class="howto-title">方案：Cloudflare Workers（免费额度足够）</div>
+            <p class="hint">
+              Worker 自己决定响应头，所以天生带 CORS；免费额度每天 10 万次请求，
+              正常使用远远够。仓库里已备好现成代码：
+              <code>deploy/cloudflare-worker/reference-worker.js</code>。
+            </p>
+            <ol class="steps">
+              <li>
+                Cloudflare Dashboard → <strong>Workers &amp; Pages</strong> →
+                Create → Worker，起个名字，Deploy（会拿到一个
+                <code>https://&lt;名字&gt;.&lt;你的子域&gt;.workers.dev</code> 地址）
+              </li>
+              <li>
+                把 <code>reference-worker.js</code> 的内容整个替换进该 Worker 的编辑器 → Deploy
+              </li>
+              <li>
+                <strong>Settings → Variables and Secrets → Add</strong>，
+                类型选 <strong>Secret</strong>、名字填 <code>LIB_TOKEN</code>、
+                值填你自己生成的随机串，然后 Deploy
+                <div class="hint">
+                  随机串：<code>node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"</code>
+                </div>
+              </li>
+              <li>
+                把 <code>LIB_TOKEN</code> 拼到路径后面，就是资料库地址：
+                <code>https://&lt;名字&gt;.&lt;你的子域&gt;.workers.dev/lib/&lt;你的随机串&gt;</code>
+              </li>
+              <li>
+                回到上面把地址填进来 → 先「测试这个地址」→ 通过了再「保存并启用」
+              </li>
+            </ol>
+            <p class="hint">
+              <strong>token 为什么不能在代码里而要用 Secret</strong>：
+              本项目仓库是公开的，token 一旦写进源码就等于公开了资料库地址。
+              所以代码里没有、也不能有它，只从 Secret 读 ——
+              没配时 Worker 会返回 500 并说明该怎么配，而不是悄悄用某个默认值。
+            </p>
+            <p class="hint">
+              <strong>怎么更新资料库内容</strong>：改 Worker 源码里的
+              <code>DEFAULT_JSON</code> 后重新 Deploy（柜型尺寸固定、货物规格变动慢，
+              这个方式够用）；内容多时也可绑一个 KV 命名空间，
+              用 <code>npx wrangler kv put</code> 更新，优先级高于 <code>DEFAULT_JSON</code>。
+            </p>
+            <p class="hint">
+              <strong>安全性如实说明</strong>：读只靠路径里那段随机串 ——
+              这是"藏起来"而<strong>不是鉴权</strong>，别人拿到串就能读，
+              够长（48 位十六进制）就没人猜得到。写则<strong>不开放任何接口</strong>，
+              只能通过 Cloudflare 控制台改，也就是只有部署者能改。
+              这是刻意的：加一个带 token 的写入接口意味着密钥要存进某个客户端，
+              而浏览器本地存储里的密钥挡不住 XSS。
+            </p>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </el-card>
 
     <!-- ══════════ 导入 ══════════ -->
@@ -535,6 +610,37 @@ async function doImport(): Promise<void> {
 .mt16 {
   margin-top: 16px;
 }
+/* 「怎么建资料库」的折叠区：给有序步骤一点缩进与行距 */
+.howto {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.howto-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+}
+.steps {
+  margin: 6px 0 6px 18px;
+  padding: 0;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.9;
+}
+.steps li {
+  margin-bottom: 4px;
+}
+.hint code {
+  background: #f0f2f5;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 .hint {
   font-size: 12px;
   color: #909399;
