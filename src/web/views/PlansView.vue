@@ -4,7 +4,7 @@
       <div class="toolbar">
         <el-button @click="refresh">刷新</el-button>
       </div>
-      <el-table :data="plans" v-loading="loading" border stripe>
+      <el-table :data="plans" v-loading="loading" border stripe class="only-desktop">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="方案名称" min-width="160" />
         <el-table-column prop="containerId" label="柜型 ID" width="90" />
@@ -27,6 +27,43 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!--
+        窄屏卡片：把「装载率」放到最显眼的位置。
+        方案列表的核心就是"哪个装得最满"，所以它当主数值，
+        名称反而退到标题行 —— 与货物/柜型页"名称为主"的排法刻意不同。
+      -->
+      <div class="only-mobile">
+        <div v-if="loading" class="mcard-empty">加载中…</div>
+        <div v-else-if="plans.length === 0" class="mcard-empty">
+          还没有保存的方案。到「装柜计算」页算完点「保存方案」。
+        </div>
+        <div v-for="row in plans" :key="row.id" class="mcard">
+          <div class="mcard-head">
+            <span style="font-weight: 600">{{ row.name }}</span>
+            <el-tag
+              size="small"
+              :type="row.result.loadRate >= 0.9 ? 'success' : row.result.loadRate >= 0.7 ? 'warning' : 'info'"
+            >
+              装载率 {{ (row.result.loadRate * 100).toFixed(1) }}%
+            </el-tag>
+          </div>
+          <div class="mcard-lead">{{ row.result.pieces }} 件</div>
+          <div class="mcard-meta">
+            <div><span class="k">创建</span>{{ row.createdAt }}</div>
+            <div><span class="k">柜型</span>#{{ row.containerId }}</div>
+          </div>
+          <div class="mcard-ops">
+            <el-button size="small" type="primary" @click="loadPlan(row)">加载</el-button>
+            <el-button size="small" @click="printPlan(row)">报表</el-button>
+            <el-popconfirm title="确认删除该方案？" @confirm="remove(row)">
+              <template #reference>
+                <el-button size="small" type="danger">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </div>
+      </div>
     </el-card>
   </div>
 </template>

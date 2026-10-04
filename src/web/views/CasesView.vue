@@ -80,7 +80,13 @@
     <!-- ══════════ 列表 ══════════ -->
     <el-card shadow="never" class="mt16">
       <template #header>案例列表</template>
-      <div class="tbl-scroll">
+      <!--
+        窄屏换卡片（.only-mobile 在 App.vue 的全局样式里）。
+        原来这里是 `min-width: 780px` + 横向滚动 —— 7 列的表格在手机上要左右拖，
+        而且看不到"偏差"这一列（最该看的那列）。
+        偏差与备注移到卡片正文里，不用横向滚就能看完。
+      -->
+      <div class="tbl-scroll only-desktop">
         <table class="grid">
           <thead>
             <tr>
@@ -147,6 +153,60 @@
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="only-mobile">
+        <div v-if="loading" class="mcard-empty">加载中…</div>
+        <div v-else-if="cases.length === 0" class="mcard-empty">
+          还没有记录。到「装柜计算」页算一次，点「记录为实测案例」。
+        </div>
+        <div v-for="c in sorted" :key="c.id" class="mcard">
+          <div class="mcard-head">
+            <span style="font-weight: 600">{{ c.name }}</span>
+            <!-- 偏差做成角标：这一页最该被一眼看到的就是它 -->
+            <el-tag v-if="deltaOf(c) !== undefined" size="small" :type="deltaOf(c)! > 0 ? 'danger' : deltaOf(c)! < 0 ? 'success' : 'info'">
+              {{ signed(deltaOf(c)!) }} 箱
+            </el-tag>
+            <el-tag v-else size="small" type="info">未填实测</el-tag>
+          </div>
+          <div class="mcard-lead">
+            {{ c.computed.pieces }} 箱 / {{ c.computed.containers }} 柜
+            <span style="font-size: 12px; font-weight: 400; color: #909399">
+              装载率 {{ pct(c.computed.loadRate * 100) }}
+            </span>
+          </div>
+          <div class="mcard-meta">
+            <div>
+              <span class="k">柜型</span>{{ c.container.label || c.container.name }}
+              {{ c.container.innerLength }}×{{ c.container.innerWidth }}×{{ c.container.innerHeight }}
+            </div>
+            <div>
+              <span class="k">现场</span>
+              <template v-if="analyze(c).actualPieces !== undefined">
+                {{ c.actual.pieces }} 箱<template v-if="c.actual.containers !== undefined"> / {{ c.actual.containers }} 柜</template>
+              </template>
+              <template v-else>未填</template>
+            </div>
+            <div><span class="k">策略</span>{{ c.strategy }}</div>
+            <div><span class="k">记录</span>{{ c.createdAt }}</div>
+          </div>
+          <div v-if="c.actual.note" class="mcard-note">{{ c.actual.note }}</div>
+          <div class="mcard-ops">
+            <el-button size="small" @click="openEdit(c)">补录实测</el-button>
+            <el-dropdown size="small" trigger="click" @command="(t: ShareTier) => copyOne(c, t)">
+              <el-button size="small" :disabled="!analyze(c).hasActual">
+                复制分享<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="summary">偏差摘要（无货物信息）</el-dropdown-item>
+                  <el-dropdown-item command="full">完整案例（去货物名称）</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button size="small" type="danger" plain @click="remove(c)">删除</el-button>
+          </div>
+        </div>
       </div>
     </el-card>
 
@@ -241,6 +301,8 @@ import { appVersion } from '../../version';
 type ShareTier = 'summary' | 'full';
 
 const cases = ref<LoadCase[]>([]);
+/** 窄屏卡片没有 el-table 的 v-loading，自行维护（详见 refresh 内的注释） */
+const loading = ref(false);
 const editVisible = ref(false);
 const editing = ref<LoadCase | null>(null);
 const form = ref<{ pieces?: number; containers?: number; note: string }>({ note: '' });
@@ -345,7 +407,14 @@ const previewDelta = computed(() => {
 });
 
 async function refresh(): Promise<void> {
-  cases.value = await api.listCases();
+  // 窄屏卡片没有 el-table 的 v-loading 可用，得自己维护这个状态，
+  // 否则首次加载期间会闪一下「还没有记录」的空态
+  loading.value = true;
+  try {
+    cases.value = await api.listCases();
+  } finally {
+    loading.value = false;
+  }
 }
 
 function openEdit(c: LoadCase): void {

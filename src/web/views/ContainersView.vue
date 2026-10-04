@@ -5,7 +5,7 @@
         <el-button type="primary" @click="openCreate">新增柜型</el-button>
         <el-button @click="refresh">刷新</el-button>
       </div>
-      <el-table :data="containers" v-loading="loading" border stripe>
+      <el-table :data="containers" v-loading="loading" border stripe class="only-desktop">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="label" label="标签" width="90" />
         <el-table-column prop="name" label="名称" min-width="160" />
@@ -33,6 +33,41 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!--
+        窄屏卡片：8 列压成一张卡。
+        刻意**不列 ID** —— 手机上没人靠 ID 找柜型，位置留给尺寸和载重这两个
+        真正影响装柜的字段。门尺寸只在有值时显示（大部分柜型没录门）。
+      -->
+      <div class="only-mobile">
+        <div v-if="loading" class="mcard-empty">加载中…</div>
+        <div v-else-if="containers.length === 0" class="mcard-empty">还没有柜型，点「新增柜型」开始。</div>
+        <div v-for="row in containers" :key="row.id" class="mcard">
+          <div class="mcard-head">
+            <span class="mcard-lead" style="margin-top: 0">{{ row.name }}</span>
+            <el-tag v-if="row.label" size="small" type="info">{{ row.label }}</el-tag>
+          </div>
+          <div class="mcard-lead">{{ row.innerLength }} × {{ row.innerWidth }} × {{ row.innerHeight }}</div>
+          <div class="mcard-meta">
+            <div><span class="k">载重</span>{{ row.weightCapacity }} kg</div>
+            <!-- 没录空柜自重时不要拼出 "- kg" 这种怪东西 -->
+            <div>
+              <span class="k">空柜</span>
+              <template v-if="row.emptyWeight">{{ row.emptyWeight.toFixed(0) }} kg</template>
+              <template v-else>未录</template>
+            </div>
+            <div v-if="row.doorDims"><span class="k">门尺寸</span>{{ row.doorDims[0] }}×{{ row.doorDims[1] }} mm</div>
+          </div>
+          <div class="mcard-ops">
+            <el-button size="small" @click="openEdit(row)">编辑</el-button>
+            <el-popconfirm title="确认删除该柜型？" @confirm="remove(row)">
+              <template #reference>
+                <el-button size="small" type="danger">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </div>
+      </div>
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑柜型' : '新增柜型'" width="700px" top="8vh">

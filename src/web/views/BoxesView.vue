@@ -14,7 +14,7 @@
           <el-option v-for="g in groupOptions" :key="g" :label="g" :value="g" />
         </el-select>
       </div>
-      <el-table :data="filteredBoxes" v-loading="loading" border stripe>
+      <el-table :data="filteredBoxes" v-loading="loading" border stripe class="only-desktop">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column prop="sku" label="SKU" min-width="110">
@@ -63,6 +63,58 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!--
+        窄屏卡片。**14 列压成 6 个字段**，取舍如下：
+
+        保留：名称、尺寸（主）、重量、堆码级、六向限制 —— 这几项决定能不能装进去
+        条件显示：SKU / 批次 / 分组 / 单价 / 单位 / 每箱件数 / 颜色 —— 有值才显示，
+                  没值的字段在卡片上只是噪声（桌面上是 `-` 占位，卡片里直接不出现）
+        舍弃：ID —— 手机上没人靠 ID 找货物
+
+        「六向限制」保留是因为它直接决定摆放可行性；有货物不能倒放之类的情况时，
+        这是用户最需要一眼看到的东西。
+      -->
+      <div class="only-mobile">
+        <div v-if="loading" class="mcard-empty">加载中…</div>
+        <div v-else-if="filteredBoxes.length === 0" class="mcard-empty">
+          {{ boxes.length === 0 ? '还没有货物，点「新增货物」开始。' : '没有符合筛选条件的货物。' }}
+        </div>
+        <div v-for="row in filteredBoxes" :key="row.id" class="mcard">
+          <div class="mcard-head">
+            <span class="mcard-lead" style="margin-top: 0">{{ row.name }}</span>
+            <el-tag v-if="row.sku" size="small" type="info">{{ row.sku }}</el-tag>
+          </div>
+          <div class="mcard-lead">{{ row.length }} × {{ row.width }} × {{ row.height }}</div>
+          <div class="mcard-meta">
+            <div><span class="k">重量</span>{{ row.weight }} kg</div>
+            <div><span class="k">堆码级</span>{{ row.stackClass }}</div>
+            <div v-if="row.pcsCount && row.pcsCount !== 1">
+              <span class="k">每箱</span>{{ row.pcsCount }} 件
+            </div>
+            <div v-if="row.batch"><span class="k">批次</span>{{ row.batch }}</div>
+            <div v-if="row.groupName"><span class="k">分组</span>{{ row.groupName }}</div>
+            <div v-if="row.unitPrice !== undefined">
+              <span class="k">单价</span>{{ row.unitPrice }}{{ row.unit ? ' ' + row.unit : '' }}
+            </div>
+          </div>
+          <div class="mcard-meta">
+            <el-tag v-if="restrictedDirs(row).length" type="warning" size="small">
+              {{ restrictedDirs(row).length }}/6 向受限
+            </el-tag>
+            <el-tag v-else type="success" size="small">六向可摆</el-tag>
+            <span v-if="row.color" class="color-dot" :style="{ background: row.color }"></span>
+          </div>
+          <div class="mcard-ops">
+            <el-button size="small" @click="openEdit(row)">编辑</el-button>
+            <el-popconfirm title="确认删除该货物？" @confirm="remove(row)">
+              <template #reference>
+                <el-button size="small" type="danger">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </div>
+      </div>
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑货物' : '新增货物'" width="820px" top="6vh">

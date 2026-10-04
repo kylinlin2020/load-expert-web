@@ -259,6 +259,106 @@ watch(() => route.path, () => {
   ─────────────────────────────────────────────────────────────
 -->
 <style>
+/* ───────────── 桌面/窄屏二选一 ─────────────
+ *
+ * 柜型 / 货物 / 方案 / 案例这四个列表页：宽屏用表格，窄屏用卡片。
+ * 两套 DOM 都在，CSS 决定显示哪一套。
+ *
+ * ## 为什么不靠 CSS 把表格"改造成"卡片
+ *
+ * 试过的那条常规路子（`@media` 里 `td { display: block }` + `td::before { content: attr(data-label) }`）
+ * 在这里走不通，有两个各自独立的硬伤：
+ *
+ * 1. **`el-table` 没有 `data-label` 这个钩子。** 三个列表页用的是 Element Plus 的
+ *    `<el-table-column>`，拿不到 body 单元格的任意属性。
+ *    绕过去只能给每列加 `class-name`、再在 CSS 里 `content: "名称"` 手写一遍标签，
+ *    于是**每个列名存在两处**（`label=` 与 CSS `content`）—— 改一处忘另一处，
+ *    手机上就会显示过期列名，而这种错没有任何工具会报。
+ * 2. **9 列的表格变不成可读的卡片。** 强行每格一行会得到一张 9 行高的小字表，
+ *    比原表格更难读。卡片的价值在于**只放该看的字段**，这需要人为取舍，
+ *    不是 CSS 能自动完成的。
+ *
+ * 所以改成两套标记。**代价是模板重复** —— 但重复的只是标记，
+ * 所有处理函数（openEdit / remove / printPlan …）仍是同一份，不存在逻辑重复。
+ */
+.only-mobile {
+  display: none;
+}
+
+@media (max-width: 991px) {
+  /* `!important` 是必需的：el-table 自带 display/布局声明，优先级高于此处的类选择器 */
+  .only-desktop {
+    display: none !important;
+  }
+  .only-mobile {
+    display: block;
+  }
+}
+
+/* 移动端卡片本体（四页共用一套视觉，字段内容各页自己定） */
+.mcard {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.mcard:last-child {
+  margin-bottom: 0;
+}
+/* 标题行：主名称 + 可选右侧标签 */
+.mcard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+/* 主数值（尺寸、装载率）：卡片里最该被先看到的东西 */
+.mcard-lead {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+/* 次要键值对，一行一个，标签定宽便于对齐扫读 */
+.mcard-meta {
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.9;
+  margin-top: 4px;
+}
+.mcard-meta .k {
+  display: inline-block;
+  min-width: 62px;
+  color: #909399;
+}
+.mcard-note {
+  font-size: 12px;
+  color: #606266;
+  background: #f5f7fa;
+  border-left: 3px solid #dcdfe6;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-top: 8px;
+  line-height: 1.7;
+}
+.mcard-ops {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.mcard-ops :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.mcard-empty {
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+  padding: 26px 0;
+}
+
 /* 抽屉导航：与固定侧边栏同一套深色 */
 .nav-drawer .el-drawer__body {
   padding: 0;
