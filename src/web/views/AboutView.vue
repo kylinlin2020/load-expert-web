@@ -328,6 +328,41 @@
           要附带具体数据的话，请自己到「数据备份」页导出一份。
         </li>
       </ul>
+
+      <!-- ══════════ 九 ══════════
+           放在最后一节、且不加侧边栏菜单项，是刻意的：
+           工具页的菜单是干活的入口，把打赏塞进去会让它变成运营页。
+           想支持的人会翻到这里，不想看的人不会被拦着。
+      -->
+      <h3 class="sec">九、支持作者</h3>
+      <p class="tip">
+        <strong>完全自愿。</strong>本项目免费、无任何付费墙，
+        不支持也完全不影响使用 —— 所有功能对所有人一样开放。
+      </p>
+      <p>
+        维护它需要时间：算法调优、实测案例的偏差分析、问题排查，
+        大多在下班后和周末。如果它帮你省了时间、或者少出了一次差错，
+        下面任选其一支持一下。
+      </p>
+      <div class="donate-row">
+        <figure v-for="d in DONATE" :key="d.file" class="donate-item">
+          <figcaption>{{ d.label }}</figcaption>
+          <!--
+            **刻意不裁剪、不缩放、不转格式**：
+            收款码是 JPEG（有损），任何再处理都可能让二维码扫不出来，
+            而我无法解码验证 —— 扫不出来比页面不好看严重得多。
+            用 CSS max-width 控制显示尺寸即可：那是浏览器缩放，不改动文件本身。
+            图片缺失时走 onError 占位，避免留一个碎图框。
+          -->
+          <img
+            v-if="!imgFailed[d.file]"
+            :src="d.src"
+            :alt="`${d.label}收款码`"
+            @error="onImgError(d.file)"
+          />
+          <div v-else class="donate-missing">收款码图片未找到</div>
+        </figure>
+      </div>
     </el-card>
 
     <div class="foot">LoadExpert Web · Vue 3 + TypeScript 全栈 · 算法引擎与界面均为本项目实现</div>
@@ -335,6 +370,53 @@
 </template>
 
 <script setup lang="ts">
+import { reactive } from 'vue';
+
+/**
+ * 支持作者：收款码
+ *
+ * ## 图片路径必须用 BASE_URL 拼，不能写死 `/donate-xxx.jpg`
+ *
+ * 静态版 `base: './'`（为了能部署到任意子路径），所以 index.html 里的资源引用
+ * 是相对**当前 HTML 所在目录**的。若在模板里写 `/donate-alipay.jpg`，
+ * 浏览器会解析到域名根目录 —— 线上就是
+ * `https://kylinlin2020.github.io/donate-alipay.jpg` → **404**，
+ * 而本地 `vite dev` 下 `/donate-alipay.jpg` 恰好能正常返回。
+ *
+ * 也就是说：**本地怎么测都是好的，一部署就坏，且不会报任何构建错误。**
+ * `import.meta.env.BASE_URL` 随 base 变化，两套构建都对，故一律用它。
+ *
+ * ## 为什么不 import 图片
+ *
+ * `import img from '@/assets/x.jpg'` 由 Vite 打包，路径也正确，
+ * 但图会被塞进 `src/assets/` 并带内容哈希。换收款码要改代码 + 重新构建，
+ * 而放 `public/` 只需覆盖同名文件 —— 对"码可能要用几年"这件事，后者更省事。
+ *
+ * 代价是 public/ 下的文件**不进产物自检**（`check-static-bundle.mjs` 只看 JS），
+ * 所以额外加了运行时 `onError` 占位兜底。
+ */
+const DONATE = [
+  {
+    label: '微信支付',
+    file: 'donate-wechat.jpg',
+    // 静态版 BASE_URL = './' → './donate-wechat.jpg'；服务端版 = '/' → '/donate-wechat.jpg'
+    src: `${import.meta.env.BASE_URL}donate-wechat.jpg`,
+  },
+  {
+    label: '支付宝',
+    file: 'donate-alipay.jpg',
+    src: `${import.meta.env.BASE_URL}donate-alipay.jpg`,
+  },
+];
+
+/** 记录加载失败的图片，避免碎图框 */
+const imgFailed = reactive<Record<string, boolean>>({});
+function onImgError(file: string): void {
+  imgFailed[file] = true;
+  // 只记一次：开发时会刷屏，而线上没有 console 可看
+  if (import.meta.env.DEV) console.warn(`[AboutView] 收款码图片未找到：${file}`);
+}
+
 /**
  * 应用版本 + 使用说明
  *
@@ -538,5 +620,65 @@ code {
   font-size: 11px;
   color: #909399;
   padding: 18px 0 6px;
+}
+
+/* ───────────── 支持作者 ───────────── */
+
+/*
+ * 两张收款码并排。
+ *
+ * **断点取 600px 而不是全局的 991px**：这页其余部分是长文档 + 宽表格，
+ * 窄屏下靠横向滚动解决（重排一张 8 列报表毫无意义）。
+ * 但这两张图并排只需要 2×240px，600px 以上就该并排 ——
+ * 沿用 991px 会让 768px 的平板白占一大片竖向空间。
+ */
+.donate-row {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.donate-item {
+  margin: 0;
+  text-align: center;
+}
+
+.donate-item figcaption {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 6px;
+}
+
+.donate-item img {
+  /* 用 max-width 而非固定 width：图片没到位时不会撑破布局 */
+  max-width: 240px;
+  height: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fff;
+  display: block;
+}
+
+.donate-missing {
+  width: 240px;
+  padding: 40px 12px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #909399;
+  background: #f5f7fa;
+}
+
+@media (max-width: 600px) {
+  .donate-row {
+    gap: 12px;
+  }
+  .donate-item img,
+  .donate-missing {
+    max-width: 100%;
+    width: 220px;
+  }
 }
 </style>
