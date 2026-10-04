@@ -25,7 +25,19 @@
     "fillspace",
     "load-expert"
   ],
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-only",
+  "author": {
+    "name": "Kylin",
+    "url": "https://github.com/kylinlin2020"
+  },
+  "homepage": "https://github.com/kylinlin2020/load-expert-web#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kylinlin2020/load-expert-web.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kylinlin2020/load-expert-web/issues"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/three": "^0.186.0",
