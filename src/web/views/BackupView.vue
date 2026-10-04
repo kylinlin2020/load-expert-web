@@ -84,7 +84,13 @@
 
       <el-divider />
 
-      <el-form label-width="76px">
+      <!--
+        label-width 92px：「资料库地址」是 5 个汉字（5×14=70px），
+        加上 label 自带的 12px 右内边距需要约 82px。
+        原来的 76px 装不下，「址」被挤到第二行、压到了下面的按钮上（截图发现）。
+        项目惯例是 4 字用 88~130px、2 字用 76px，5 字对应 92px。
+      -->
+      <el-form label-width="92px" class="lib-url-form">
         <el-form-item label="资料库地址">
           <el-input
             v-model="libUrlInput"
@@ -611,6 +617,29 @@ async function doImport(): Promise<void> {
   margin-top: 16px;
 }
 /* 「怎么建资料库」的折叠区：给有序步骤一点缩进与行距 */
+
+/*
+ * 资料库地址这一项在窄屏改成「标签在上、输入框占满整行」。
+ *
+ * 92px 的标签在 390px 视口下会把输入框压到 160px —— 填一个 URL 的话
+ *  barely 能看到中间那段。Element Plus 的 form-item 是横向 flex，
+ * 故这里用 `display: block` 让 label 与 content 上下排列。
+ * 只作用于这一个表单（.lib-url-form），其余表单的标签宽度都是按内容算好的，
+ * 不该被这条规则波及。
+ */
+@media (max-width: 991px) {
+  .lib-url-form :deep(.el-form-item) {
+    display: block;
+  }
+  .lib-url-form :deep(.el-form-item__label) {
+    display: block;
+    width: auto !important;
+    padding: 0 0 4px;
+    line-height: 1.6;
+    text-align: left;
+  }
+}
+
 .howto {
   margin-top: 8px;
   padding: 10px 12px;
