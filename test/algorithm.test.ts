@@ -1215,8 +1215,10 @@ test('P1 块评分相等时选残余更整洁的（preferCleanResidual 确实生
   assert.ok(CARGO_CONFIGS.some((c) => c.preferCleanResidual), '候选里应有 preferCleanResidual=true 的腿');
   assert.ok(CARGO_CONFIGS.some((c) => !c.preferCleanResidual), '候选里应保留 preferCleanResidual=false 的历史腿');
   // 历史六腿必须全在（曾因替换而非追加，把 20ft 三货物 S1 从 84.8% 打到 76.4%）
-  // 历史六腿必须全在（曾因替换而非追加，把 20ft 三货物 S1 从 84.8% 打到 76.4%）
-  assert.equal(CARGO_CONFIGS.length, 12, '候选腿数应为 12（历史 6 + 残余整洁 2 + 残余前瞻 2 + 足迹 0.6 两腿）');
+  // 候选腿数 12 → 18：贪心集合覆盖在 22 个场景（含 5 个记录在案的回归场景）上
+  // 从 144 组网格里选出 6 条新腿，吃掉 96% 的可达空间（14/22 场景提升、0 个下降）。
+  // 详见 load.ts 的「候选表是怎么选出来的」。
+  assert.equal(CARGO_CONFIGS.length, 18, '候选腿数应为 18（历史 12 + 贪心集合覆盖选出的 6 条新腿）');
   // 逐层码放策略的最优足迹比例是 0.6（策略1/2 在此达 948），与 0.75 / 0 都不同
   assert.ok(
     CARGO_CONFIGS.some((c) => Math.abs(c.footprintRatio - 0.6) < 1e-9),
@@ -1224,6 +1226,118 @@ test('P1 块评分相等时选残余更整洁的（preferCleanResidual 确实生
   );
   assert.ok(CARGO_CONFIGS.some((c) => c.residualWeight > 0), '候选里应有启用残余前瞻的腿');
   assert.ok(CARGO_CONFIGS.every((c) => (c.residualWeight === 0) === !c.preferCleanResidual || true), 'residualWeight 字段必须存在');
+});
+
+test('候选表新增腿：β=0.3 中间档必须存在，且实测收益不得回退', () => {
+  // ## 这六条腿是怎么来的
+  //
+  // 贪心集合覆盖：22 个场景 × 144 组网格（4 排序 × 块上限 × 足迹 × 整洁 × β），
+  // 总可达空间 19.45 点，取前 6 条腿吃掉 96%。详见 load.ts 的「候选表是怎么选出来的」。
+  //
+  // ## 核心缺口：β 的中间档
+  // 原表只有 β=0（完全不看残余）与 β=0.9（过度看重残余而牺牲当次装入量），
+  // **0.3 这一档是空的**。随机搜索里它反复出现在最优参数中。
+  assert.equal(
+    CARGO_CONFIGS.filter((c) => Math.abs(c.residualWeight - 0.3) < 1e-9).length, 4,
+    '应有 4 条 β=0.3 的腿（原表只有 β=0 与 β=0.9，中间档是空的）',
+  );
+
+  // ## 具体收益：防止将来有人把这些腿"清理掉"
+  // 断言取实测值略作下取整，留一点余量但仍能挡住"删掉新腿"这种改动。
+  // 注意这些是**下限**断言 —— 上限不该锁死，将来若换结构还能更高。
+  //
+  // 必须显式设 allowDirections / supportFaces：makeBox 的默认值（未设 = 六向全放行）
+  // 与真实货物（水泵类只放行 2 个方向）不是一回事，不设的话场景对不上、
+  // 实测值会明显偏低。第一次写这条测试时正是栽在这里（93.39% 跑成 89.22%）。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+
+  // 六种货物：85.90% → 90.83%（新增腿里收益最大的一条）
+  const six = load({
+    boxes: [
+      cargo('A', 900, 500, 400, 40, 120), cargo('B', 700, 450, 350, 30, 200),
+      cargo('C', 600, 400, 400, 25, 250), cargo('D', 500, 350, 300, 20, 350),
+      cargo('E', 400, 300, 300, 12, 450), cargo('F', 300, 250, 250, 8, 600),
+    ],
+    container: c40, strategy: 3,
+  });
+  assert.ok(six.loadRate > 0.908, `六种货物应 ≥90.8%（旧表 85.90%），实际 ${(six.loadRate * 100).toFixed(2)}%`);
+
+  // 数量不齐：90.39% → 93.39%
+  const uneven = load({
+    boxes: [cargo('A', 480, 380, 380, 20, 400), cargo('B', 515, 380, 425, 22, 300), cargo('C', 400, 300, 300, 12, 1000)],
+    container: c40, strategy: 3,
+  });
+  assert.ok(uneven.loadRate > 0.933, `数量不齐应 ≥93.3%（旧表 90.39%），实际 ${(uneven.loadRate * 100).toFixed(2)}%`);
+
+  // 长条件混装：81.35% → 83.93%
+  const longs = load({
+    boxes: [cargo('L1', 1800, 400, 400, 40, 80), cargo('L2', 1500, 350, 350, 35, 100), cargo('L3', 600, 400, 400, 22, 300)],
+    container: c40, strategy: 3,
+  });
+  assert.ok(longs.loadRate > 0.839, `长条件混装应 ≥83.9%（旧表 81.35%），实际 ${(longs.loadRate * 100).toFixed(2)}%`);
+});
+
+test('候选表新增腿：任何场景都不得比旧表更差（取最大值的性质）', () => {
+  // load() 在全部候选腿里按 max(种类数 → 装载率) 择优，老腿一条不删，
+  // 所以**新增腿只可能持平或提升，不可能让结果变差**。
+  // 这条性质是"放心加腿"的全部依据，故显式测出来：把候选表截断到前 12 条
+  // （即旧表），逐场景与完整 18 条比较，必须「只升不降」。
+  const cases: Array<{ name: string; boxes: Box[]; container: Container }> = [
+    {
+      name: '水泵基准', container: { id: 'c', name: 'C', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 },
+      boxes: [
+        makeBox({ id: 'P20', length: 480, width: 380, height: 380, weight: 20, quantity: 630 }),
+        makeBox({ id: 'P30', length: 515, width: 380, height: 425, weight: 22, quantity: 336 }),
+      ],
+    },
+    {
+      name: '三种大件', container: { id: 'c', name: 'C', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 },
+      boxes: [
+        makeBox({ id: 'A', length: 600, width: 400, height: 400, weight: 25, quantity: 500 }),
+        makeBox({ id: 'B', length: 500, width: 400, height: 300, weight: 18, quantity: 600 }),
+        makeBox({ id: 'C', length: 400, width: 300, height: 300, weight: 12, quantity: 800 }),
+      ],
+    },
+    {
+      name: '45HQ 六种', container: { id: 'c', name: 'C', innerLength: 13556, innerWidth: 2352, innerHeight: 2698, weightCapacity: 27600 },
+      boxes: [
+        makeBox({ id: 'A', length: 900, width: 500, height: 400, weight: 40, quantity: 120 }),
+        makeBox({ id: 'B', length: 700, width: 450, height: 350, weight: 30, quantity: 200 }),
+        makeBox({ id: 'C', length: 600, width: 400, height: 400, weight: 25, quantity: 250 }),
+        makeBox({ id: 'D', length: 500, width: 350, height: 300, weight: 20, quantity: 350 }),
+        makeBox({ id: 'E', length: 400, width: 300, height: 300, weight: 12, quantity: 450 }),
+        makeBox({ id: 'F', length: 300, width: 250, height: 250, weight: 8, quantity: 600 }),
+      ],
+    },
+  ];
+  const full = CARGO_CONFIGS;
+  const oldOnly = CARGO_CONFIGS.slice(0, 12);
+  for (const sc of cases) {
+    const a = load({ boxes: sc.boxes, container: sc.container, strategy: 3 });
+    // 用 12 条旧腿直接跑择优（复刻 load 的口径）
+    const legs = oldOnly.map((c) => runGreedy(
+      { boxes: sc.boxes, container: sc.container, strategy: 3 },
+      c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight,
+    ));
+    const kindsOf = (r: ReturnType<typeof runGreedy>) =>
+      new Set(r.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+    let best = legs[0], bK = kindsOf(legs[0]);
+    for (const r of legs) {
+      const k = kindsOf(r);
+      if (k > bK || (k === bK && r.loadRate > best.loadRate + 1e-9)) { best = r; bK = k; }
+    }
+    const ka = new Set(a.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+    assert.ok(ka >= bK, `${sc.name}：种类数不应下降（旧 ${bK} → 新 ${ka}）`);
+    assert.ok(a.loadRate >= best.loadRate - 1e-9, `${sc.name}：装载率不应下降（旧 ${(best.loadRate * 100).toFixed(2)}% → 新 ${(a.loadRate * 100).toFixed(2)}%）`);
+  }
+  assert.ok(full.length >= oldOnly.length, '候选表只能追加，不能变短');
 });
 
 test('P1 多起点择优：种类数是硬约束，不得为装载率牺牲整个货物', () => {
