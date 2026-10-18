@@ -587,16 +587,56 @@ export function runGreedy(
     }))
     .sort(sortKey);
 
-  if (opts.lpEnabled && cargo.length > 1) {
+  /**
+   * 「数量留空 = 不限」的货物单独成一组，**第二阶段**才参与装载
+   *
+   * ## 为什么要分阶段（用户反馈：填了数量却没按填的算）
+   *
+   * 用户把其中几种货物的数量填好、另一种留空，期望是
+   * **"填了数量的按填的装满，留空的那种拿剩下的空间"**。
+   *
+   * 旧实现把留空翻译成 `quantity = 柜内容积 / 单箱体积`（几何容量），
+   * 对算法而言它就是一个**普通的、比别的货物大 3~4 倍的硬上限**，
+   * 于是和"填了数量"的货物一视同仁地按体积份额瓜分空间：
+   *
+   * ```
+   * 40HQ（74.63 m³）+ 水泵2=630 + 水泵3=336 + 水泵4（400×300×300）留空
+   *  → 几何容量 = 74.63 / 0.036 = 2072
+   * ```
+   *
+   * | 策略 | 水泵2 | 水泵3 | 水泵4 | 装载率 |
+   * |---|---|---|---|---|
+   * | 0 | 385 | 276 | 485 | 89.91% |
+   * | 3 | 354 | 336 | 420 | 90.59% |
+   * | 5 | **141** | 251 | 984 | 88.54% |
+   *
+   * 填了 630 的那个被压到 **141**，填了 336 的那个被压到 251 ——
+   * 用户看到的就是"我填的数量没被当回事"。
+   * 根因不是贪心本身弱，而是**"承诺"和"填充"这两种意图被压成了同一种数字**。
+   *
+   * ## 分阶段后的语义
+   * - 阶段① 只装填了数量的（`unlimited` 为假）：它们之间仍按原有的轮转/均衡逻辑，
+   *   **多起点择优（种类数 → 装载率）完全不受影响** —— 全部货物都填数量时
+   *   只有一个阶段，行为与改动前逐字节一致（966 箱 / 95.96% 的基准不受影响）。
+   * - 阶段② 装留空的：这时剩余空间就是它的，把缝隙填满。
+   *
+   * 全部留空 / 全部填数量两种情形都只有**一个**阶段，因此是零行为变化。
+   */
+  const bounded = cargo.filter((c) => !c.box.unlimited);
+  const unbounded = cargo.filter((c) => c.box.unlimited === true);
+
+  if (opts.lpEnabled && bounded.length > 1) {
+    // LP 只在阶段①内部做配比：对留空货物做配比会直接违背"不限"的语义。
+    // 全部货物都填数量时 bounded === cargo，与改动前完全一致。
     const mix = solveVolumeMix(
-      cargo.map((c) => boxVolume(c.box)),
-      cargo.map((c) => c.remaining),
-      cargo.map((c) => c.box.weight),
+      bounded.map((c) => boxVolume(c.box)),
+      bounded.map((c) => c.remaining),
+      bounded.map((c) => c.box.weight),
       containerVol,
       container.weightCapacity,
     );
     if (mix.ok) {
-      cargo.forEach((c, i) => {
+      bounded.forEach((c, i) => {
         const s = mix.solution[i];
         if (Number.isFinite(s) && s >= 0) {
           c.limit = Math.min(c.limit, Math.floor(s));
@@ -634,8 +674,12 @@ export function runGreedy(
   // 实测顺序 A→B 得 507 箱、B→A 得 855 箱，偏差 40%）。
   // 这里为每种货物在"能容纳它的空间"中按体积降序取最大者，
   // 并以各货物已装体积占比做轻微均衡，避免大块反复由同一货物取得。
-  const pickSpaceFor = (c: CargoState): number => {
-    if (cargo.length <= 1) {
+  //
+  // `peers` 是**当前阶段**的同组货物，而不是全部货物 ——
+  // 均衡只应在"一起分空间的人"之间做：阶段①里那个留空的货物还没出场，
+  // 若把它算进 others，会让阶段①的均衡判据一直偏移。
+  const pickSpaceFor = (c: CargoState, peers: CargoState[]): number => {
+    if (peers.length <= 1) {
       return -1; // 交给 placeOnce 内部的最大空间启发式
     }
     const dims = [c.box.length, c.box.width, c.box.height];
@@ -658,7 +702,7 @@ export function runGreedy(
       }
       const spaceVol = s.dx * s.dy * s.dz;
       // 惩罚项：其它货物中若有装得更少的，当前货物应让出大空间
-      const others = cargo.filter((x) => x !== c && x.remaining > 0);
+      const others = peers.filter((x) => x !== c && x.remaining > 0);
       const minOther = others.length ? Math.min(...others.map(overshoot)) : Infinity;
       // 差距越大，惩罚越重（分母用 1 避免除零；差距 0 时无惩罚）
       const penalty = 1 / (1 + Math.max(0, minOther === Infinity ? 0 : 0.5 - overshoot(c)));
@@ -672,79 +716,102 @@ export function runGreedy(
     return bestIdx;
   };
 
-  while (spaces.count > 0 && guard < guardLimit) {
-    guard++;
-    iterations.value++;
-    if (iterations.value > opts.maxIterations) {
-      break;
+  /**
+   * 一个装载阶段：只让 `peers` 里的货物参与轮转，直到装完或空间用尽
+   *
+   * 抽成函数而不是写两遍循环，是因为阶段②必须**复用完全相同的贪心逻辑**：
+   * 留空的那种货物填缝隙时同样需要轮转、均衡、残余前瞻与 sticky-miss，
+   * 任何一处不一致都会让"填缝隙"退化成某种更笨的填法。
+   *
+   * `guard` / `iterations` / `misses` / `spaces` 与 `usedVolume`/`usedWeight`
+   * 都在闭包外，两个阶段**共用同一份空间与累计量**，因此阶段②看到的是
+   * 阶段①装完之后剩下的柜子。
+   */
+  const packPhase = (peers: CargoState[]): void => {
+    if (peers.length === 0) {
+      return;
     }
-    let progressed = false;
+    while (spaces.count > 0 && guard < guardLimit) {
+      guard++;
+      iterations.value++;
+      if (iterations.value > opts.maxIterations) {
+        break;
+      }
+      let progressed = false;
 
-    for (const c of cargo) {
-      if (c.remaining <= 0 || c.exhausted) {
+      for (const c of peers) {
+        if (c.remaining <= 0 || c.exhausted) {
+          continue;
+        }
+        // 块大小上限只在「仍有货物一件未装」时生效：
+        // 先让每种货物都拿到入场券（避免先到者吃满整柜），
+        // 一旦所有货物都已参与，就解除限制、自由填充以最大化装载率。
+        // 一直限着会导致装载率大幅下降（实测策略1 从 80% 掉到 27%）。
+        // 判据只看**当前阶段**的同组货物：阶段②的留空货物在阶段①还没装任何一箱，
+        // 若把它算进来，阶段①会被永久限着块大小，基准场景直接崩掉。
+        const needFairness = peers.some((x) => x.placed === 0 && x.remaining > 0);
+        const r = placeOnce(
+          c.box,
+          c.remaining,
+          container,
+          strategy,
+          spaces,
+          placements,
+          usedVolume,
+          usedWeight,
+          opts,
+          pickSpaceFor(c, peers),
+          peers.length > 1 && needFairness,
+          blockRatio,
+          footprintRatio,
+          preferCleanResidual,
+          residualWeight,
+          // 残余前瞻需要知道"这块之外还有谁没装完"
+          peers.filter((x) => x.remaining > 0).map((x) => x.box),
+        );
+        if (r.placed > 0) {
+          usedVolume += r.volume;
+          usedWeight += r.weight;
+          c.remaining -= r.placed;
+          c.placed += r.placed;
+          progressed = true;
+        } else {
+          c.lastConstraintReason = r.reason;
+          const n = (misses.get(c.box.id) ?? 0) + 1;
+          misses.set(c.box.id, n);
+        }
+      }
+
+      if (progressed) {
+        // 空间拓扑已变化（某货物成功放置 → split 产生新空间），
+        // 必须清空所有 miss 计数：否则先到的货物会在自身放不下的时刻
+        // 被永久标记 exhausted，而此时其它货物仍在不断腾出新空间，
+        // 后到的货物将再无参与机会（实测 B→A 顺序下 A 恒装入 0 箱）。
+        misses.clear();
         continue;
       }
-      // 块大小上限只在「仍有货物一件未装」时生效：
-      // 先让每种货物都拿到入场券（避免先到者吃满整柜），
-      // 一旦所有货物都已参与，就解除限制、自由填充以最大化装载率。
-      // 一直限着会导致装载率大幅下降（实测策略1 从 80% 掉到 27%）。
-      const needFairness = cargo.some((x) => x.placed === 0 && x.remaining > 0);
-      const r = placeOnce(
-        c.box,
-        c.remaining,
-        container,
-        strategy,
-        spaces,
-        placements,
-        usedVolume,
-        usedWeight,
-        opts,
-        pickSpaceFor(c),
-        cargo.length > 1 && needFairness,
-        blockRatio,
-        footprintRatio,
-        preferCleanResidual,
-        residualWeight,
-        // 残余前瞻需要知道"这块之外还有谁没装完"
-        cargo.filter((x) => x.remaining > 0).map((x) => x.box),
-      );
-      if (r.placed > 0) {
-        usedVolume += r.volume;
-        usedWeight += r.weight;
-        c.remaining -= r.placed;
-        c.placed += r.placed;
-        progressed = true;
-      } else {
-        c.lastConstraintReason = r.reason;
-        const n = (misses.get(c.box.id) ?? 0) + 1;
-        misses.set(c.box.id, n);
-      }
-    }
 
-    if (progressed) {
-      // 空间拓扑已变化（某货物成功放置 → split 产生新空间），
-      // 必须清空所有 miss 计数：否则先到的货物会在自身放不下的时刻
-      // 被永久标记 exhausted，而此时其它货物仍在不断腾出新空间，
-      // 后到的货物将再无参与机会（实测 B→A 顺序下 A 恒装入 0 箱）。
-      misses.clear();
-      continue;
+      // 本轮全体零进展：连续多轮无解才判定这些货物确实放不下
+      let allDone = true;
+      for (const c of peers) {
+        if (c.remaining > 0 && (misses.get(c.box.id) ?? 0) >= STICKY_MISS) {
+          c.exhausted = true;
+        }
+        if (c.remaining > 0 && !c.exhausted) {
+          allDone = false;
+        }
+      }
+      if (allDone) {
+        // 本轮所有货物都放不下 → 空间已无法再被利用
+        break;
+      }
     }
+  };
 
-    // 本轮全体零进展：连续多轮无解才判定这些货物确实放不下
-    let allDone = true;
-    for (const c of cargo) {
-      if (c.remaining > 0 && (misses.get(c.box.id) ?? 0) >= STICKY_MISS) {
-        c.exhausted = true;
-      }
-      if (c.remaining > 0 && !c.exhausted) {
-        allDone = false;
-      }
-    }
-    if (allDone) {
-      // 本轮所有货物都放不下 → 空间已无法再被利用
-      break;
-    }
-  }
+  // 阶段①先装填了数量的（承诺），阶段②再让留空的去填剩余空间。
+  // 全部填数量 / 全部留空时都只有一个阶段，行为与改动前一致。
+  packPhase(bounded);
+  packPhase(unbounded);
 
   // —— 未装清单与原因分类 ——
   for (const c of cargo) {
@@ -866,9 +933,42 @@ export const CARGO_CONFIGS: ReadonlyArray<{ sortKey: CargoSortKey; blockRatio: n
   { sortKey: VOL_DESC, blockRatio: 0, footprintRatio: 0.6, preferCleanResidual: false, residualWeight: 0.9 },
 ];
 
-/** 参与装载的货物种类数（至少装入 1 箱的 boxId 个数） */
-function loadedKinds(r: PackResult): number {
-  return new Set(r.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+/**
+ * 把结果里的"装入种类"拆成**点名要的**与**留空填充的**两笔账
+ *
+ * ## 为什么要拆
+ *
+ * 「种类数是硬约束」的初衷（见 `load()` 的注释）是：**一份把某个品项整个漏掉的
+ * 装柜单，即使装载率更高也是废单**。这对用户**填了数量**的货物完全成立。
+ *
+ * 但对「数量留空 = 不限」的那种货物不成立 —— 它装 0 箱并不是"漏掉"，
+ * 而是说明**前面点名的货物把柜子装得更满了**（缝隙都塞不下它）。
+ * 实测 40HQ + 水泵2=630 + 水泵3=336 + 水泵4 留空，逐腿诊断：
+ *
+ * ```
+ * 腿8  WP20=630  WP30=336  WP40=  0   95.96%   ← 两个承诺全装满
+ * 腿3  WP20=630  WP30=254  WP40= 21   87.83%   ← 为了塞进 21 箱填充货，牺牲了 82 箱承诺货
+ * ```
+ *
+ * 按旧口径腿3 因"种类=3 > 2"胜出，于是水泵3 被压到 254 —— 用户填的 336 又没被当回事。
+ * 拆分后：点名的货物 0 箱仍然算失败（hard），填充货物的 0 箱只用于**同分时的末位比较**。
+ */
+function kindsSplit(r: PackResult, boundedIds: ReadonlySet<string>): { hard: number; soft: number } {
+  let hard = 0;
+  let soft = 0;
+  const seen = new Set<string>();
+  for (const p of r.placements) {
+    if (p.count <= 0 || seen.has(p.boxId)) {
+      continue;
+    }
+    seen.add(p.boxId);
+    if (boundedIds.has(p.boxId)) {
+      hard++;
+    } else {
+      soft++;
+    }
+  }
+  return { hard, soft };
 }
 
 /**
@@ -885,6 +985,20 @@ function loadedKinds(r: PackResult): number {
  * **一份把某个品项整个漏掉的装柜单，即使装载率更高也是废单**：
  * 现场要的是"每种货都要上车"，剩余量只是次要指标（会显示在未装清单里）。
  * 这与 P0-d「先到者不许吃满整柜」的初衷一致，多起点不能把它破坏掉。
+ *
+ * ## 硬约束只对「用户点名要的货物」生效
+ *
+ * 「数量留空 = 不限」的货物装 0 箱不是漏掉，而是说明前面装得更满。
+ * 若把填充货物也算进硬约束，就会出现"为了让填充货拿到 1 箱而牺牲承诺货"的
+ * 倒挂（实测水泵3 被从 336 压到 254）。故择优口径为：
+ *
+ * | 场景 | 硬约束 | 比较顺序 |
+ * |---|---|---|
+ * | 全部填数量 | 全部种类（旧口径，**逐位不变**） | 种类数 → 装载率 |
+ * | 全部留空 | 全部种类（旧口径，**逐位不变**） | 种类数 → 装载率 |
+ * | 有填有留 | 仅填了数量的那些 | 点名种类数 → 装载率 → 填充种类数 |
+ *
+ * 前两种是本次改动**必须保证零行为变化**的场景（966 箱 / 95.96% 的基准就在其中）。
  */
 export function load(params: LoadParams): PackResult {
   const active = params.boxes.filter((b) => b.quantity > 0);
@@ -892,18 +1006,41 @@ export function load(params: LoadParams): PackResult {
   if (active.length <= 1) {
     return runGreedy(params, first.sortKey, first.blockRatio, first.footprintRatio, first.preferCleanResidual, first.residualWeight);
   }
+  // 用户点名了要装的货物（填了数量）→ 只有它们算"漏掉即废单"
+  const boundedIds = new Set(active.filter((b) => b.unlimited !== true).map((b) => b.id));
+  // 一个都没点名（全留空）时退回旧口径：此时"种类数"本身就是硬约束
+  const kindsAsHard = boundedIds.size === 0;
+
+  const better = (
+    a: { hard: number; soft: number; rate: number },
+    b: { hard: number; soft: number; rate: number },
+  ): boolean => {
+    const aHard = kindsAsHard ? a.hard + a.soft : a.hard;
+    const bHard = kindsAsHard ? b.hard + b.soft : b.hard;
+    if (aHard !== bHard) {
+      return aHard > bHard;
+    }
+    // 用相对比较避免浮点误差导致来回抖动
+    if (Math.abs(a.rate - b.rate) > 1e-9) {
+      return a.rate > b.rate;
+    }
+    return a.soft > b.soft;
+  };
+
+  const scoreOf = (r: PackResult) => {
+    const k = kindsSplit(r, boundedIds);
+    return { hard: k.hard, soft: k.soft, rate: r.loadRate };
+  };
+
   let best = runGreedy(params, first.sortKey, first.blockRatio, first.footprintRatio, first.preferCleanResidual, first.residualWeight);
-  let bestKinds = loadedKinds(best);
-  let bestRate = best.loadRate;
+  let bestScore = scoreOf(best);
   for (let i = 1; i < CARGO_CONFIGS.length; i++) {
     const c = CARGO_CONFIGS[i];
     const r = runGreedy(params, c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight);
-    const kinds = loadedKinds(r);
-    // ① 种类数优先；② 同等种类数下比装载率（用相对比较避免浮点误差导致来回抖动）
-    if (kinds > bestKinds || (kinds === bestKinds && r.loadRate > bestRate + 1e-9)) {
+    const score = scoreOf(r);
+    if (better(score, bestScore)) {
       best = r;
-      bestKinds = kinds;
-      bestRate = r.loadRate;
+      bestScore = score;
     }
   }
   return best;

@@ -86,7 +86,8 @@ export function createLocalApi(db?: RowStore): ApiShape {
       if (!Number.isInteger(qty) || qty <= 0) {
         throw new LocalApiError(400, `invalid qty for box ${item.boxId}`);
       }
-      out.push({ ...box, quantity: qty });
+      // `unlimited` 必须原样带到算法：它决定该货物是「承诺装满」还是「填剩余空间」
+      out.push({ ...box, quantity: qty, unlimited: item.unlimited === true });
     }
     return out;
   }

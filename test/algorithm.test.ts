@@ -1273,3 +1273,144 @@ test('PCS_COUNT 件数计算', () => {
   const box = makeBox({ id: 'pcs', pcsCount: 4 });
   assert.equal(countPieces(box, 10), 40);
 });
+
+/* ───────────── 「数量留空 = 不限」的两阶段语义 ───────────── */
+
+/**
+ * 用户反馈：「装柜里货物多选，我设置其中几个的产品数量，留了一个不输入数量，
+ * 计算结果没有按设定产品数量计算，还是按软件自己的随机计算」。
+ *
+ * 根因：前端把「留空」翻译成 `quantity = 柜内容积 / 单箱体积`（几何容量），
+ * 于是算法眼里"我有 630 箱"和"我不限"是两个**同类的具体数字**，
+ * 贪心一视同仁地按体积份额瓜分空间。实测修复前：
+ *
+ * | 策略 | 水泵2（填 630） | 水泵3（填 336） | 水泵4（留空） |
+ * |---|---|---|---|
+ * | 0 | 385 | 276 | 485 |
+ * | 3 | 354 | 336 | 420 |
+ * | 5 | **141** | 251 | 984 |
+ *
+ * 修复分两层：
+ * 1. `Box.unlimited` 标记透传到算法，`runGreedy` 分两阶段 ——
+ *    先装填了数量的（承诺），再让留空的去填剩余空间。
+ * 2. `load()` 的择优里「种类数」硬约束只对**填了数量的**生效 ——
+ *    留空货物装 0 箱不是"漏掉"，而是说明前面装得更满。
+ *
+ * 第 2 层是必需的：只做第 1 层时，策略 3 会出现「630 / 254 / 21」——
+ * 为了让填充货物拿到 21 箱，牺牲了承诺的 82 箱，因为旧口径按"种类 3 > 2"取胜。
+ */
+
+const hqForQty: Container = {
+  id: 'hq', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800,
+};
+const hqVol = hqForQty.innerLength * hqForQty.innerWidth * hqForQty.innerHeight;
+/** 与前端 geometricCapacity 同口径：柜内容积 ÷ 单箱体积 */
+const geomCap = (l: number, w: number, h: number) => Math.max(1, Math.floor(hqVol / (l * w * h)));
+
+const pumpQtyBox = (id: string, l: number, w: number, h: number, kg: number, quantity: number, unlimited?: boolean) =>
+  makeBox({
+    id, length: l, width: w, height: h, weight: kg, quantity, unlimited,
+    stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+    allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+
+const wp20Of = (quantity = 630) => pumpQtyBox('WP20', 480, 380, 380, 20, quantity);
+const wp30Of = (quantity = 336) => pumpQtyBox('WP30', 515, 380, 425, 22, quantity);
+const wp40Unlimited = () => pumpQtyBox('WP40', 400, 300, 300, 12, geomCap(400, 300, 300), true);
+
+const countOf = (r: { placements: Array<{ boxId: string; count: number }> }, id: string) =>
+  r.placements.filter((p) => p.boxId === id).reduce((s, p) => s + p.count, 0);
+const totalOf = (r: { placements: Array<{ count: number }> }) => r.placements.reduce((s, p) => s + p.count, 0);
+
+test('不限语义：加一个留空货物，点名货物的箱数不得改变（用户反馈的修复）', () => {
+  // 核心不变式：留空货物只能往剩余空间里**加**箱子，绝不能从点名货物那里**抢**箱子。
+  // 修复前策略 5 会把水泵2 从 630 压到 141、水泵3 从 336 压到 251。
+  for (const strategy of [0, 1, 2, 3, 4, 5]) {
+    const base = load({ boxes: [wp20Of(), wp30Of()], container: hqForQty, strategy });
+    const mixed = load({ boxes: [wp20Of(), wp30Of(), wp40Unlimited()], container: hqForQty, strategy });
+    assert.equal(
+      countOf(mixed, 'WP20'), countOf(base, 'WP20'),
+      `策略${strategy}：加入留空货物后水泵2 被压到 ${countOf(mixed, 'WP20')}（基准 ${countOf(base, 'WP20')}）`,
+    );
+    assert.equal(
+      countOf(mixed, 'WP30'), countOf(base, 'WP30'),
+      `策略${strategy}：加入留空货物后水泵3 被压到 ${countOf(mixed, 'WP30')}（基准 ${countOf(base, 'WP30')}）`,
+    );
+    assert.ok(
+      totalOf(mixed) >= totalOf(base),
+      `策略${strategy}：总量不应减少，${totalOf(mixed)} < ${totalOf(base)}`,
+    );
+  }
+});
+
+test('不限语义：两条候选腿的「阶段①」与不带留空货物时逐项一致', () => {
+  // 只断言最终选中结果不够 —— 12 条候选腿里有任何一条在阶段①动了手脚，
+  // 将来某个场景选中它时就会复现同样的问题。故逐腿核对。
+  for (const strategy of [0, 3, 5]) {
+    let same = 0;
+    for (const c of CARGO_CONFIGS) {
+      const base = runGreedy(
+        { boxes: [wp20Of(), wp30Of()], container: hqForQty, strategy },
+        c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight,
+      );
+      const mixed = runGreedy(
+        { boxes: [wp20Of(), wp30Of(), wp40Unlimited()], container: hqForQty, strategy },
+        c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight,
+      );
+      if (countOf(base, 'WP20') === countOf(mixed, 'WP20') && countOf(base, 'WP30') === countOf(mixed, 'WP30')) {
+        same++;
+      }
+    }
+    assert.equal(same, CARGO_CONFIGS.length, `strategy=${strategy}：只有 ${same}/${CARGO_CONFIGS.length} 条腿的点名货物箱数与基准一致`);
+  }
+});
+
+test('不限语义：择优时留空货物装 0 箱不算失败（否则会牺牲承诺货物）', () => {
+  // 策略 3 的基准腿给出 630+336（95.96%），填充货物 0 箱 —— 这才是正确答案。
+  // 若把填充货物也算进「种类数硬约束」，会选中 630/254/21（87.83%）那条腿。
+  const r = load({ boxes: [wp20Of(), wp30Of(), wp40Unlimited()], container: hqForQty, strategy: 3 });
+  assert.equal(countOf(r, 'WP20'), 630, `策略3 水泵2 应装满 630，实际 ${countOf(r, 'WP20')}`);
+  assert.equal(countOf(r, 'WP30'), 336, `策略3 水泵3 应装满 336，实际 ${countOf(r, 'WP30')}`);
+  assert.ok(r.loadRate > 0.959, `策略3 装载率应 > 95.9%，实际 ${(r.loadRate * 100).toFixed(2)}%`);
+});
+
+test('不限语义：全部留空时退回旧口径（种类数优先），保证零行为变化', () => {
+  // boundedIds 为空 → kindsAsHard = true → 与改动前的比较顺序完全一致。
+  // 若这条退化，多起点择优在"全留空"场景下的行为就变了。
+  for (const strategy of [0, 3]) {
+    const a = pumpQtyBox('A', 480, 380, 380, 20, geomCap(480, 380, 380), true);
+    const b = pumpQtyBox('B', 515, 380, 425, 22, geomCap(515, 380, 425), true);
+    const r = load({ boxes: [a, b], container: hqForQty, strategy });
+    const kinds = new Set(r.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+    assert.equal(kinds, 2, `策略${strategy}：两种留空货物都应装到，实际种类 ${kinds}`);
+    assert.ok(r.loadRate > 0.3, `策略${strategy} 装载率应 > 30%，实际 ${(r.loadRate * 100).toFixed(2)}%`);
+  }
+});
+
+test('不限语义：未装清单如实标注留空货物没装上的原因', () => {
+  // 留空货物装 0 箱不是"漏装"，但必须出现在未装清单里并带上原因，
+  // 否则用户会以为软件偷偷把它吃了。
+  const r = load({ boxes: [wp20Of(), wp30Of(), wp40Unlimited()], container: hqForQty, strategy: 3 });
+  if (countOf(r, 'WP40') === 0) {
+    const rej = r.rejected.find((x) => x.boxId === 'WP40');
+    assert.ok(rej, '留空货物一件未装时应出现在未装清单里');
+    assert.ok(rej!.reason.length > 0, `未装原因不应为空，实际 '${rej!.reason}'`);
+    assert.notEqual(rej!.reason, 'lp-capped', '留空货物不应被报成 LP 配比截断（它根本没参与 LP）');
+  }
+});
+
+test('不限语义：Box.unlimited 不影响主数据（缺省即普通有数量货物）', () => {
+  // unlimited 是**计算期字段**，主数据里不存在。显式传 false 与不传必须等价。
+  const a = load({ boxes: [wp20Of(), wp30Of()], container: hqForQty, strategy: 3 });
+  const b = load({
+    boxes: [
+      makeBox({ id: 'WP20', length: 480, width: 380, height: 380, weight: 20, quantity: 630, unlimited: false, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+      makeBox({ id: 'WP30', length: 515, width: 380, height: 425, weight: 22, quantity: 336, unlimited: false, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+    ],
+    container: hqForQty, strategy: 3,
+  });
+  assert.equal(totalOf(b), totalOf(a), 'unlimited=false 与不传该字段必须等价');
+  assert.equal(countOf(b, 'WP20'), countOf(a, 'WP20'));
+  assert.equal(countOf(b, 'WP30'), countOf(a, 'WP30'));
+});

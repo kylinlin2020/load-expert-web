@@ -54,16 +54,29 @@ import { validateBackup, type BackupFile } from '../model/backup.js';
 import { appVersion } from '../version.js';
 import type { Box, Container, LoadOptions } from '../types/index.js';
 
+/**
+ * 计算请求里的一行货物
+ *
+ * `unlimited: true` =「数量留空 = 不限，塞满柜子为止」。`qty` 仍是一个上限
+ * （柜内容积折算的几何容量），算法靠这个布尔量区分「承诺装满」与「填剩余空间」。
+ * 与 web/api/types.ts 的 LoadItemInput 是同一份契约的两处实现。
+ */
+export interface LoadItemBody {
+  boxId: number | string;
+  qty: number;
+  unlimited?: boolean;
+}
+
 export interface CalculateBody {
   containerId: number | string;
-  items: Array<{ boxId: number | string; qty: number }>;
+  items: LoadItemBody[];
   strategy?: number;
   options?: LoadOptions;
 }
 
 export interface CalculateMultiBody {
   containerId: number | string;
-  items: Array<{ boxId: number | string; qty: number }>;
+  items: LoadItemBody[];
   strategy?: number;
   options?: LoadOptions;
   /**
@@ -298,7 +311,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       if (!Number.isInteger(qty) || qty <= 0) {
         return reply.status(400).send({ error: `invalid qty for box ${item.boxId}` });
       }
-      boxes.push({ ...box, quantity: qty });
+      boxes.push({ ...box, quantity: qty, unlimited: item.unlimited === true });
     }
     const strategy = Number.isInteger(body.strategy) ? (body.strategy as number) : 3;
     const result = load({
@@ -330,7 +343,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       if (!Number.isInteger(qty) || qty <= 0) {
         return reply.status(400).send({ error: `invalid qty for box ${item.boxId}` });
       }
-      boxes.push({ ...box, quantity: qty });
+      boxes.push({ ...box, quantity: qty, unlimited: item.unlimited === true });
     }
     const strategy = Number.isInteger(body.strategy) ? (body.strategy as number) : 3;
     const result = planMultiContainer({

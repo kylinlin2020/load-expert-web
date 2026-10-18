@@ -19,10 +19,24 @@ export interface PlanRecord {
   createdAt: string;
 }
 
+/**
+ * 计算请求的一行货物
+ *
+ * `unlimited: true` 表示「数量留空 = 不限，塞满柜子为止」——
+ * 此时 `qty` 仍需传一个**上限**（前端给柜内容积折算的几何容量），
+ * 算法靠 `unlimited` 区分「这是承诺，必须装满」与「这是填充，装完为止」。
+ * 缺省 / false 即普通的有数量货物。
+ */
+export interface LoadItemInput {
+  boxId: string | number;
+  qty: number;
+  unlimited?: boolean;
+}
+
 /** 计算请求体 */
 export interface CalculatePayload {
   containerId: string | number;
-  items: Array<{ boxId: string | number; qty: number }>;
+  items: LoadItemInput[];
   strategy?: number;
   options?: LoadOptions;
 }
@@ -30,7 +44,7 @@ export interface CalculatePayload {
 /** 多柜计算请求体 */
 export interface CalculateMultiPayload {
   containerId: string | number;
-  items: Array<{ boxId: string | number; qty: number }>;
+  items: LoadItemInput[];
   strategy?: number;
   options?: LoadOptions;
   /** 连续空装柜次数上限（不传则后端默认 3）。见 CalculateMultiBody 处的说明 */

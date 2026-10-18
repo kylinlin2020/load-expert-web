@@ -160,6 +160,82 @@ test('计算：算法在「浏览器侧」跑通，参考口径 966 箱 / 95.96%
   assert.ok(Math.abs(r.loadRate - 0.9596) < 0.0001, `装载率应约 95.96%，实际 ${(r.loadRate * 100).toFixed(2)}%`);
 });
 
+test('计算：unlimited 标记穿过 localClient 后仍然生效（静态版真实链路）', async () => {
+  // 这条守的是 `resolveItems` —— 它把 items 拼成 Box 的那一步。
+  // 标记若在这里被丢掉，算法就退回"一视同仁瓜分空间"的旧行为，
+  // 而 UI 上完全看不出来（只是数字变了），所以必须端到端验一次。
+  const a = api();
+  const hq = await a.createContainer({
+    name: '40HQ 不限验证', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800,
+  });
+  const wp20 = await a.createBox({
+    name: '水泵2', length: 480, width: 380, height: 380, weight: 20, stackClass: 8,
+    supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+  const wp30 = await a.createBox({
+    name: '水泵3', length: 515, width: 380, height: 425, weight: 22, stackClass: 8,
+    supportClasses: [8, 8, 5, 5, 5, 5], allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+  const wp40 = await a.createBox({
+    name: '水泵4', length: 400, width: 300, height: 300, weight: 12, stackClass: 8,
+    supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+
+  const items = [
+    { boxId: wp20.id, qty: 630 },
+    { boxId: wp30.id, qty: 336 },
+    // 几何容量上限：留空时前端按柜内容积折算，与算法内部口径一致
+    { boxId: wp40.id, qty: Math.floor((11900 * 2340 * 2680) / (400 * 300 * 300)), unlimited: true },
+  ];
+
+  const base = await a.calculate({ containerId: hq.id, items: items.slice(0, 2), strategy: 3 });
+  const mixed = await a.calculate({ containerId: hq.id, items, strategy: 3 });
+  const n = (r: typeof base, id: string) =>
+    r.placements.filter((p) => p.boxId === String(id)).reduce((s, p) => s + p.count, 0);
+
+  const b20 = n(base, wp20.id), b30 = n(base, wp30.id);
+  const m20 = n(mixed, wp20.id), m30 = n(mixed, wp30.id);
+  assert.equal(m20, b20, `留空货物不得挤占水泵2（基准 ${b20}，实际 ${m20}）`);
+  assert.equal(m30, b30, `留空货物不得挤占水泵3（基准 ${b30}，实际 ${m30}）`);
+  assert.ok(mixed.loadRate >= base.loadRate - 1e-9, '总量不应比基准更差');
+});
+
+test('计算：unlimited 缺省（不传该字段）时行为与传 false 完全一致', async () => {
+  const a = api();
+  const hq = await a.createContainer({
+    name: '40HQ 默认值', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800,
+  });
+  const wp20 = await a.createBox({
+    name: '水泵2', length: 480, width: 380, height: 380, weight: 20, stackClass: 8,
+    supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+  const wp30 = await a.createBox({
+    name: '水泵3', length: 515, width: 380, height: 425, weight: 22, stackClass: 8,
+    supportClasses: [8, 8, 5, 5, 5, 5], allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+
+  const omitted = await a.calculate({
+    containerId: hq.id,
+    items: [{ boxId: wp20.id, qty: 630 }, { boxId: wp30.id, qty: 336 }],
+    strategy: 3,
+  });
+  const explicitFalse = await a.calculate({
+    containerId: hq.id,
+    items: [
+      { boxId: wp20.id, qty: 630, unlimited: false },
+      { boxId: wp30.id, qty: 336, unlimited: false },
+    ],
+    strategy: 3,
+  });
+  assert.equal(explicitFalse.pieces, omitted.pieces, '不传 unlimited 与传 false 必须等价');
+  assert.ok(Math.abs(explicitFalse.loadRate - omitted.loadRate) < 1e-9);
+});
+
 test('计算：校验与错误文案与服务端版一致', async () => {
   const a = api();
   const c = (await a.listContainers())[0];

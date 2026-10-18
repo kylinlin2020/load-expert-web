@@ -112,7 +112,15 @@
               </template>
             </el-table-column>
           </el-table>
-          <div class="pick-hint">数量留空 = <strong>不限</strong>，塞满柜子为止</div>
+          <!--
+            提示语要说清**优先级**，否则用户不知道两种数量混在一起时谁先谁后。
+            「填了数量的先装满，留空的拿剩下的空间」就是算法两阶段装载的实际口径
+            （见 src/algorithm/load.ts）—— 之前只写「塞满柜子为止」，
+            用户以为留空的那种会被优先塞满，于是把填好的数量看成"没被当回事"。
+          -->
+          <div class="pick-hint">
+            数量留空 = <strong>不限</strong>：<strong>填了数量的先装满</strong>，留空的拿剩下的空间
+          </div>
           <!--
             本页刻意不显示共享资料库里的条目（原因见 loadBaseData 的注释）。
             少了东西就要说清楚，否则用户会以为资料库没生效。
@@ -582,6 +590,7 @@ import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 import api, { type PlanRecord } from '../api/client';
+import type { LoadItemInput } from '../api/types';
 import type {
   Box,
   CartonPlacement,
@@ -1123,8 +1132,14 @@ function isUnlimited(boxId: string): boolean {
  * 但**显式填 0** 仍按 0 件处理（与"不限"区分开）：填 0 是明确表示不装，
  * 留空是"没填"。两者在 el-input-number 上表现相同，故以 undefined 为准 ——
  * 用户若真要 0 件，应该点「移除」把它移出本次装载。
+ *
+ * ## `unlimited` 必须一起提交
+ * 光把「留空」翻译成一个很大的 `qty` 是不够的：算法分不清
+ * "我有 630 箱（承诺）"和"我不限（填充）"，于是把两者一视同仁地瓜分空间 ——
+ * 实测 40HQ + 水泵2=630 + 水泵3=336 + 第三个留空，填了数量的被压到 141~576。
+ * 见 `src/algorithm/load.ts` 的两阶段装载。
  */
-function validateSelection(): Array<{ boxId: string; qty: number }> | null {
+function validateSelection(): Array<{ boxId: string; qty: number; unlimited: boolean }> | null {
   const rows = selectedBoxRows.value;
   if (rows.length === 0) {
     ElMessage.warning('请先在「货物与数量」中从货物管理选择要装载的货物');
@@ -1135,7 +1150,7 @@ function validateSelection(): Array<{ boxId: string; qty: number }> | null {
     ElMessage.warning(`以下已选货物数量为 0：${zero.join('、')}（要"不限"就把数量清空；要不装就点「移除」）`);
     return null;
   }
-  return rows.map((b) => ({ boxId: b.id, qty: effectiveQty(b) }));
+  return rows.map((b) => ({ boxId: b.id, qty: effectiveQty(b), unlimited: isUnlimited(b.id) }));
 }
 
 /**
@@ -1165,7 +1180,7 @@ function validateSelection(): Array<{ boxId: string; qty: number }> | null {
  * 免得每种柜型白跑默认的 3 轮完整计算。
  */
 async function calculateByContainerTypes(
-  items: Array<{ boxId: string; qty: number }>,
+  items: LoadItemInput[],
   options: LoadOptions,
 ): Promise<MultiPlanResult> {
   const groups: ContainerTypeGroup[] = [];
