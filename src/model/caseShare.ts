@@ -38,7 +38,7 @@
  * 本文件不碰剪贴板、不碰 DOM、不读环境。`meta` 由调用方注入，
  * 所以时间与版本号在测试里是确定的，输出可以逐字断言。
  */
-import { STRATEGY_NAMES } from '../algorithm/candidate-blocks.js';
+import { STRATEGY_NAMES, STRATEGY_AUTO } from '../algorithm/candidate-blocks.js';
 import { analyzeCase, type LoadCase } from './case.js';
 
 export interface ShareMeta {
@@ -76,6 +76,7 @@ export function pctText(v: number | undefined, digits = 2): string {
 }
 
 function strategyText(n: number): string {
+  if (n === STRATEGY_AUTO) return '自动（取最满）';
   return `${n} ${STRATEGY_NAMES[n] ?? '（未知策略）'}`;
 }
 

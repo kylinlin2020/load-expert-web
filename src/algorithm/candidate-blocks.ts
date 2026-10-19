@@ -655,6 +655,14 @@ export function generateCandidateBlock(input: GenerateBlocksInput, strategy: num
 export const ALL_STRATEGIES = [0, 1, 2, 3, 4, 5] as const;
 
 /**
+ * 「自动策略」哨兵：依次跑 ALL_STRATEGIES 全部策略，取最好的一次（见算法侧 load()）
+ *
+ * 只作为**入参**的取值，绝不会传进候选块生成器：算法在跑之前就把它展开成具体策略号，
+ * 所以 `PackResult.strategy` 始终是 0~5 里的具体值（报表与实测案例据此显示）。
+ */
+export const STRATEGY_AUTO = -1;
+
+/**
  * 策略名称（输出用 + 前端显示）
  */
 export const STRATEGY_NAMES: Record<number, string> = {
@@ -664,6 +672,8 @@ export const STRATEGY_NAMES: Record<number, string> = {
   3: '满舱主块（基准）',
   4: '承托分级分层',
   5: '均衡层高',
+  // -1 = 自动（依次跑 0~5 取最满）。仅用于**展示**，不会传进候选块生成器。
+  [-1]: '自动（取最满）',
 };
 
 /** 策略几何特征说明（前端 tooltip） */
@@ -674,6 +684,7 @@ export const STRATEGY_HINTS: Record<number, string> = {
   3: '三轴尽可能堆满且只吃整层，装载率最高，作为对照基准',
   4: '层数不超过货物自身堆码级别，尊重承载能力，装载率低于满舱',
   5: '按可用件数反推层数、够用即止，块的竖直占位更贴合实际货量',
+  [-1]: '依次跑 0~5 全部策略，取装载率最高的一次（耗时约为单策略的 6 倍，且会覆盖你手选的策略）',
 };
 
 /** 柜内容积 */

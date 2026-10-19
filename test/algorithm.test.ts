@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Box, Container } from '../src/types/index.js';
-import { load, runGreedy, CARGO_CONFIGS } from '../src/algorithm/load.js';
+import { load, runGreedy, CARGO_CONFIGS, planMultiContainer, greedyMultiContainer, countByBox } from '../src/algorithm/load.js';
 import { orientDims, ORIENTATION_AXIS_ORDERS } from '../src/algorithm/orientations.js';
-import { generateStrategy0, generateStrategy1, generateStrategy2, generateStrategy3, generateStrategy4, generateStrategy5, containerVolume, MULTI_CARGO_FOOTPRINT_RATIO } from '../src/algorithm/candidate-blocks.js';
+import { generateStrategy0, generateStrategy1, generateStrategy2, generateStrategy3, generateStrategy4, generateStrategy5, containerVolume, MULTI_CARGO_FOOTPRINT_RATIO, STRATEGY_AUTO, STRATEGY_NAMES } from '../src/algorithm/candidate-blocks.js';
 import { scoreBlock } from '../src/algorithm/block-scoring.js';
 import { SpaceManager } from '../src/algorithm/space-manager.js';
 import { solveMaximize, solveVolumeMix } from '../src/algorithm/simplex.js';
@@ -1527,4 +1527,226 @@ test('不限语义：Box.unlimited 不影响主数据（缺省即普通有数量
   assert.equal(totalOf(b), totalOf(a), 'unlimited=false 与不传该字段必须等价');
   assert.equal(countOf(b, 'WP20'), countOf(a, 'WP20'));
   assert.equal(countOf(b, 'WP30'), countOf(a, 'WP30'));
+});
+
+/* ───────────── 单货物多起点（去掉「单货物只跑第①条腿」的短路）───────────── */
+
+test('单货物多起点：不再只跑第①条腿（实测 1200×800×800 提升 12.35 点）', () => {
+  // ## 缺陷
+  // load() 历史上在 active.length <= 1 时**直接返回第①条腿**，理由是"只有一种货物、
+  // sortKey 没意义"。这只说对了一半：sortKey 确实无效，但 placeOnce 的块上限写作
+  // `maxBlockVolumeRatio: multiCargo ? blockRatio : 0`（足迹同理），
+  // 单货物时 peers.length === 1 ⇒ multiCargo = false ⇒ **两个上限恒为 0**。
+  // 于是整条腿只剩 (preferCleanResidual, residualWeight) 起作用 —— 这两组偏偏有用。
+  //
+  // ## 实测（策略 3）
+  // | 场景 | 只跑① | 多起点 | 差 |
+  // |---|---|---|---|
+  // | 40HQ 1200×800×800 ×120 | 58.66% | 71.01% | +12.35 点 |
+  // | 40HQ 600×400×400 ×3000 | 75.64% | 81.81% | +6.17 点 |
+  //
+  // 断言取下限口径（略低于实测），留出将来继续优化的余量，但仍能挡住"退回短路"。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+
+  const big = load({ boxes: [cargo('BIG', 1200, 800, 800, 60, 120)], container: c40, strategy: 3 });
+  assert.ok(big.loadRate > 0.705, `1200×800×800 应 ≥70.5%（旧行为 58.66%），实际 ${(big.loadRate * 100).toFixed(2)}%`);
+
+  const mid = load({ boxes: [cargo('A', 600, 400, 400, 25, 3000)], container: c40, strategy: 3 });
+  assert.ok(mid.loadRate > 0.815, `600×400×400 应 ≥81.5%（旧行为 75.64%），实际 ${(mid.loadRate * 100).toFixed(2)}%`);
+});
+
+test('单货物多起点：去重依据是 (preferCleanResidual, residualWeight) 只有 5 种组合', () => {
+  // 实现按这两个字段去重（其余三个字段在单货物下恒无效），所以"18 条腿"实际只跑 5 次。
+  // 若将来往候选表里加新的 (整洁, β) 组合，这个数字会变 —— 提醒把这层覆盖关系重新核对，
+  // 不要让新组合**静默地**没被跑到。
+  const combos = new Set(CARGO_CONFIGS.map((c) => `${c.preferCleanResidual}|${c.residualWeight}`));
+  assert.equal(combos.size, 5, `单货物下候选表应塌缩成 5 种 (整洁, β) 组合，实际 ${combos.size}`);
+});
+
+test('单货物多起点：任何场景都不得比第①条腿更差（取最大值的性质）', () => {
+  // 与多货物「追加不替换」同一条性质：单货物也是"跑遍再取最大"，
+  // 所以新行为只可能持平或提升。逐场景与第①条腿比对，显式锁住这条性质。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const c20: Container = { id: 'c', name: '20GP', innerLength: 5800, innerWidth: 2340, innerHeight: 2380, weightCapacity: 21770 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+  const cases: Array<{ name: string; boxes: Box[]; container: Container }> = [
+    { name: '1200×800×800 ×120', container: c40, boxes: [cargo('BIG', 1200, 800, 800, 60, 120)] },
+    { name: '600×400×400 ×3000', container: c40, boxes: [cargo('A', 600, 400, 400, 25, 3000)] },
+    { name: '480×380×380 ×5000', container: c40, boxes: [cargo('P20', 480, 380, 380, 20, 5000)] },
+    { name: '300×250×250 ×20000', container: c40, boxes: [cargo('S', 300, 250, 250, 6, 20000)] },
+    { name: '20ft 580×380×320 ×1000', container: c20, boxes: [cargo('X', 580, 380, 320, 15, 1000)] },
+    { name: '1200×800×120 ×400（需求已足）', container: c40, boxes: [cargo('F', 1200, 800, 120, 25, 400)] },
+  ];
+  const first = CARGO_CONFIGS[0];
+  for (const c of cases) {
+    const params = { boxes: c.boxes, container: c.container, strategy: 3 };
+    const now = load(params);
+    const one = runGreedy(params, first.sortKey, first.blockRatio, first.footprintRatio, first.preferCleanResidual, first.residualWeight);
+    assert.ok(
+      now.loadRate >= one.loadRate - 1e-9,
+      `${c.name}：多起点 ${(now.loadRate * 100).toFixed(2)}% 不得低于第①条腿 ${(one.loadRate * 100).toFixed(2)}%`,
+    );
+  }
+});
+
+/* ───────────────── 多柜均衡分柜（柜数只减不增）───────────────── */
+
+test('多柜均衡分柜：能省柜时必须省（实测 6 → 5，正好等于体积下限）', () => {
+  // ## 缺陷
+  // 顺序装满会把每一柜都灌到极限，于是末柜常常只剩一点点 —— 实测这个场景
+  // 6 柜、**末柜只有 12.4%**。改成"先把货均分到 N 柜再装"后 5 柜就够（= 体积下限）。
+  //
+  // 需求体积 = 3000×500×400×300 + 4000×400×300×300 = 324e9，
+  // 40HQ = 11900×2340×2680 = 74.627e9 ⇒ 下限 ceil(4.34) = 5。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+  const boxes = [cargo('A', 500, 400, 300, 18, 3000), cargo('B', 400, 300, 300, 12, 4000)];
+
+  const r = planMultiContainer({ boxes, container: c40, strategy: 3 });
+  assert.equal(r.totalContainers, 5, `应省到体积下限 5 柜（顺序装满要 6 柜），实际 ${r.totalContainers}`);
+  assert.equal(r.remaining.length, 0, '采用均衡分柜时货必须全部装完');
+  assert.ok(r.overallRate > 0.85, `5 柜时总装载率应 >85%，实际 ${(r.overallRate * 100).toFixed(2)}%`);
+  const last = r.plans[r.plans.length - 1];
+  assert.ok(last.loadRate > 0.7, `末柜不应再是近乎空柜（实测 86.8%），实际 ${(last.loadRate * 100).toFixed(2)}%`);
+});
+
+test('多柜均衡分柜：柜数只减不增（追加不替换的性质）', () => {
+  // 与「候选表追加腿」同一条性质：均衡分柜只有**成功且柜数更少**时才被采用，
+  // 否则原样返回顺序装满的结果。所以柜数只可能持平或减少。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+  const cases: Array<{ name: string; boxes: Box[] }> = [
+    { name: '两货物中等规模（可省）', boxes: [cargo('A', 500, 400, 300, 18, 3000), cargo('B', 400, 300, 300, 12, 4000)] },
+    { name: '水泵2×1200', boxes: [cargo('P20', 480, 380, 380, 20, 1200)] },
+    { name: '大小悬殊批量', boxes: [cargo('BIG', 1200, 800, 800, 60, 90), cargo('S', 300, 250, 250, 6, 9000)] },
+  ];
+  for (const c of cases) {
+    const now = planMultiContainer({ boxes: c.boxes, container: c40, strategy: 3 });
+    const greedy = greedyMultiContainer(c.boxes, c40, 3, undefined, 3);
+    assert.ok(
+      now.totalContainers <= greedy.totalContainers,
+      `${c.name}：均衡分柜 ${now.totalContainers} 柜不得多于顺序装满 ${greedy.totalContainers} 柜`,
+    );
+  }
+});
+
+test('多柜均衡分柜：省不下时原样退回顺序装满（remaining 如实保留）', () => {
+  // "三货物大规模"体积下限 10 柜，但几何上做不到（顺序装满 12 柜、末柜 5.1%）。
+  // 这时必须原样返回顺序装满的结果，不能为了"看起来少一柜"而丢货。
+  const c40: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+  const cargo = (id: string, l: number, w: number, h: number, kg: number, quantity: number) =>
+    makeBox({
+      id, length: l, width: w, height: h, weight: kg, quantity,
+      stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4],
+      allowDirections: [true, true, false, false, false, false],
+      supportFaces: [true, true, false, false, false, false],
+    });
+  const boxes = [cargo('A', 600, 400, 400, 25, 3000), cargo('B', 500, 400, 300, 18, 4000), cargo('C', 400, 300, 300, 12, 6000)];
+  const now = planMultiContainer({ boxes, container: c40, strategy: 3 });
+  const greedy = greedyMultiContainer(boxes, c40, 3, undefined, 3);
+  assert.equal(now.totalContainers, greedy.totalContainers, '省不下时必须与顺序装满同柜数');
+  assert.deepEqual(now.remaining, greedy.remaining, 'remaining 必须如实保留');
+  // 且需求必须守恒：装入 + 未装 = 需求
+  const demandQty = boxes.reduce((a, b) => a + b.quantity, 0);
+  const loadedQty = now.plans.reduce((a, p) => a + [...countByBox(p).values()].reduce((x, y) => x + y, 0), 0);
+  assert.equal(loadedQty + now.remaining.reduce((a, x) => a + x.qty, 0), demandQty, '装入量 + 未装量 必须等于需求量');
+});
+
+/* ─────────────────── 策略自动择优（可选项，默认关闭）─────────────────── */
+
+/**
+ * 45HQ 三货物：固定策略 3 是 84.79%，自动应拿到策略 4 的 90.23%
+ * 这一组数字是 `scripts` 外的实测（_verify2），断言取下限口径。
+ */
+function autoCargo() {
+  return [
+    makeBox({ id: 'A', length: 600, width: 400, height: 400, weight: 25, quantity: 500, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+    makeBox({ id: 'B', length: 500, width: 400, height: 300, weight: 18, quantity: 600, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+    makeBox({ id: 'C', length: 400, width: 300, height: 300, weight: 12, quantity: 700, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+  ];
+}
+const c45: Container = { id: 'c', name: '45HQ', innerLength: 13556, innerWidth: 2352, innerHeight: 2698, weightCapacity: 27600 };
+const c40ForAuto: Container = { id: 'c', name: '40HQ', innerLength: 11900, innerWidth: 2340, innerHeight: 2680, weightCapacity: 26800 };
+
+test('自动策略：取到最优策略，且胜出策略号是具体值（不是 -1）', () => {
+  // 45HQ 三货物实测：策略 3 → 84.79%，策略 4 → 90.23%（自动应选 4）。+5.44 点。
+  const r = load({ boxes: autoCargo(), container: c45, strategy: STRATEGY_AUTO });
+  assert.ok(Number.isInteger(r.strategy) && r.strategy >= 0 && r.strategy <= 5, `胜出策略号必须是 0~5 里的具体值，实际 ${r.strategy}`);
+  assert.equal(r.strategy, 4, `这个场景实测是策略 4 夺冠，实际 ${r.strategy}`);
+  assert.ok(r.loadRate > 0.90, `应拿到 ~90.2%（策略 3 只有 84.79%），实际 ${(r.loadRate * 100).toFixed(2)}%`);
+});
+
+test('自动策略：不劣于任何单一策略（取最大值的性质）', () => {
+  // 与「候选表追加腿」「多柜均衡分柜」同一条性质：自动 = 跑遍再取最大，
+  // 所以相对任何一个固定策略都只可能持平或更好。
+  const cases: Array<{ name: string; container: Container; boxes: Box[] }> = [
+    { name: '45HQ 三货物', container: c45, boxes: autoCargo() },
+    { name: '40HQ 两货物尺寸接近', container: c40ForAuto, boxes: [
+      makeBox({ id: 'A', length: 500, width: 400, height: 300, weight: 18, quantity: 900, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+      makeBox({ id: 'B', length: 500, width: 400, height: 320, weight: 19, quantity: 700, stackClass: 8, supportClasses: [8, 8, 4, 4, 4, 4], allowDirections: [true, true, false, false, false, false], supportFaces: [true, true, false, false, false, false] }),
+    ] },
+  ];
+  for (const c of cases) {
+    const auto = load({ boxes: c.boxes, container: c.container, strategy: STRATEGY_AUTO });
+    for (const s of [0, 1, 2, 3, 4, 5]) {
+      const one = load({ boxes: c.boxes, container: c.container, strategy: s });
+      assert.ok(
+        auto.loadRate >= one.loadRate - 1e-9,
+        `${c.name}：自动 ${(auto.loadRate * 100).toFixed(2)}% 不得低于策略 ${s} ${(one.loadRate * 100).toFixed(2)}%`,
+      );
+    }
+  }
+});
+
+test('自动策略：只是旁路（胜出策略与固定策略同解时结果逐位一致）', () => {
+  // 水泵基准实测就是策略 3 夺冠（96.0%），所以「自动」必须与显式策略 3 给出
+  // **逐位相同**的摆法 —— 证明自动只是"多跑几遍取最好"，没有引入别的扰动。
+  const boxes = [wp20Of(), wp30Of()];
+  const auto = load({ boxes, container: hqForQty, strategy: STRATEGY_AUTO });
+  const three = load({ boxes, container: hqForQty, strategy: 3 });
+  assert.equal(auto.strategy, 3, `这个场景实测策略 3 夺冠，实际 ${auto.strategy}`);
+  assert.deepEqual(
+    auto.placements.map((p) => [p.boxId, p.count, p.x, p.y, p.z, p.orientation]),
+    three.placements.map((p) => [p.boxId, p.count, p.x, p.y, p.z, p.orientation]),
+    '自动与显式策略 3 的摆法必须逐位一致',
+  );
+  assert.equal(auto.loadRate, three.loadRate, '装载率也必须一致');
+});
+
+test('自动策略：-1 在名称表里有展示名（UI 不会直接显示 -1）', () => {
+  assert.equal(STRATEGY_AUTO, -1, '哨兵值必须与名称表里的键一致');
+  assert.ok((STRATEGY_NAMES[STRATEGY_AUTO] ?? '').includes('自动'), 'STRATEGY_NAMES[-1] 应给出「自动」展示名');
+});
+
+test('自动策略：多柜模式也支持，并且每个柜的 strategy 都是具体值', () => {
+  const m = planMultiContainer({ boxes: autoCargo(), container: c45, strategy: STRATEGY_AUTO });
+  assert.ok(m.plans.length > 0, '多柜自动模式应至少给出一个柜');
+  for (const p of m.plans) {
+    assert.ok(Number.isInteger(p.strategy) && p.strategy >= 0 && p.strategy <= 5, `每柜的 strategy 都应是 0~5 的具体值，实际 ${p.strategy}`);
+  }
 });

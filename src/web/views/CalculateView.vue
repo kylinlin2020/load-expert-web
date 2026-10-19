@@ -150,6 +150,7 @@
           <div class="strategy-row mt12">
             <el-radio-group v-model="strategy">
               <el-radio v-for="n in 6" :key="n - 1" :value="n - 1" border size="large">{{ n - 1 }}</el-radio>
+              <el-radio :value="-1" border size="large">自动</el-radio>
             </el-radio-group>
           </div>
           <div class="strategy-hint">
@@ -608,6 +609,9 @@ import { computedFromResult } from '../../model/case';
 import { recordAction } from '../lib/diagnostics';
 import { isFromLib } from '../api/withReferenceLib';
 import { isBetterGroup, mergeGroups, toGroup } from '../lib/containerGroups';
+// 策略名称/说明**只从算法侧取**：本地再复制一份必然会漂移 ——
+// 复制的那份曾漏掉「STRATEGY_AUTO = -1」，于是选中「自动」显示成「未知策略」。
+import { STRATEGY_NAMES, STRATEGY_HINTS } from '../../algorithm/candidate-blocks';
 import {
   buildCartons,
   buildLayerRows,
@@ -755,23 +759,6 @@ const activePlanIndex = ref(0);
  */
 const activeGroupIndex = ref(0);
 
-/** 策略名称与几何特征说明（与算法侧 STRATEGY_NAMES / STRATEGY_HINTS 对齐） */
-const STRATEGY_NAMES: Record<number, string> = {
-  0: '单方向条块',
-  1: '单层薄片',
-  2: '逐层残层',
-  3: '满舱主块（基准）',
-  4: '承托分级分层',
-  5: '均衡层高',
-};
-const STRATEGY_HINTS: Record<number, string> = {
-  0: '只沿最长轴铺一条线，细长条块，为其它货物留出最大空间',
-  1: '横向铺满一个面、竖直只放一层，主动为上方保留空腔',
-  2: '每次放一层但允许末层不足整行，货物数量不整除时能多装',
-  3: '三轴尽可能堆满且只吃整层，装载率最高，作为对照基准',
-  4: '层数不超过货物自身堆码级别，尊重承载能力，装载率低于满舱',
-  5: '按可用件数反推层数、够用即止，块的竖直占位更贴合实际货量',
-};
 // 切换装载模式时清空另一模式的结果，避免展示陈旧数据
 watch(loadMode, (m) => {
   if (m === 'multi') {
@@ -1575,7 +1562,9 @@ async function doRecordCase() {
       name: caseName.value.trim() || `案例_${new Date().toISOString().slice(0, 10)}`,
       container: c,
       boxes: selectedBoxes(),
-      strategy: strategy.value,
+      // 存**实际胜出**的策略号：自动策略下 result.strategy 已是 0~5 里的具体值，
+      // 所以实测案例里不会出现 -1 这种用户看不懂的东西。
+      strategy: result.value.strategy ?? strategy.value,
       options: options.value,
       computed: computedFromResult(result.value, caseContainerCount()),
       actual: {},

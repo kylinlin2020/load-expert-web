@@ -192,3 +192,44 @@ test('源码里不许有 U+FFFD 替换字符（编码损坏的哨兵）', () => 
     `以下位置有 U+FFFD（编码损坏，界面会显示成替换符号）：\n${offenders.join('\n')}`,
   );
 });
+
+/**
+ * 策略名称表只许有一份（算法侧）
+ *
+ * ## 为什么值得单独一条
+ *
+ * `STRATEGY_NAMES` / `STRATEGY_HINTS` 曾经在 `CalculateView.vue` 里**又抄了一份**，
+ * 注释还写着"与算法侧 STRATEGY_NAMES / STRATEGY_HINTS 对齐"。
+ * 这种复制必然漂移：算法侧加上「-1 = 自动」之后视图层那份没跟上，
+ * 于是选中「自动」显示成**「未知策略」**、说明文字整段空白。
+ *
+ * 要命的是**编译、类型检查、全部单元测试都通过** —— 只有人肉点界面才发现，
+ * 而这正是主导航上最显眼的一个控件。所以用自动检查兜住：
+ * `src/` 下除 `src/algorithm/` 之外，任何文件都不许出现策略名称字面量，
+ * 也不许自己定义 `STRATEGY_NAMES` / `STRATEGY_HINTS`。要用就 import。
+ */
+test('策略名称表只许有一份（算法侧），视图层不得复制', () => {
+  // 只挑**不会出现在普通行文里**的名称：如「承托分级分层」在 AboutView 的说明里
+  // 是正常文字，用它判定会误伤。
+  const LITERALS = ['满舱主块（基准）', '均衡层高'];
+  const dir = join(ROOT, 'src');
+  const files = (existsSync(dir) ? walk(dir, /\.(ts|vue)$/) : [])
+    .filter((f) => !relOf(f).replace(/\\/g, '/').startsWith('src/algorithm/'));
+  assert.ok(files.length > 0, '应至少扫到一些视图层文件');
+
+  const offenders: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(f, 'utf8');
+    for (const lit of LITERALS) {
+      if (text.includes(lit)) offenders.push(`${relOf(f)} 含策略名称字面量「${lit}」（应 import 而非复制）`);
+    }
+    if (/const\s+STRATEGY_(NAMES|HINTS)\b/.test(text)) {
+      offenders.push(`${relOf(f)} 又定义了一份 STRATEGY_NAMES / STRATEGY_HINTS`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `策略名称表只许有一份（src/algorithm/candidate-blocks.ts）：\n${offenders.join('\n')}`,
+  );
+});

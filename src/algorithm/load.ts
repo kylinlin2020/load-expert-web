@@ -20,7 +20,7 @@ import { SpaceManager } from './space-manager.js';
 import { checkConstraints } from './constraints.js';
 import { solveVolumeMix } from './simplex.js';
 import { summarizeLayers } from './expand.js';
-import { boxVolume, containerVolume, generateCandidateBlock, resolveOrientationPolicy, MULTI_CARGO_FOOTPRINT_RATIO } from './candidate-blocks.js';
+import { boxVolume, containerVolume, generateCandidateBlock, resolveOrientationPolicy, MULTI_CARGO_FOOTPRINT_RATIO, STRATEGY_AUTO, ALL_STRATEGIES } from './candidate-blocks.js';
 
 export interface LoadParams {
   /** 货物列表（按优先级顺序处理） */
@@ -1061,8 +1061,32 @@ function kindsSplit(r: PackResult, boundedIds: ReadonlySet<string>): { hard: num
   return { hard, soft };
 }
 
+/** 择优分数 = 装入种类数（硬/软）+ 装载率（口径见 load() 的说明） */
+function scoreOfResult(r: PackResult, boundedIds: Set<string>): { hard: number; soft: number; rate: number } {
+  const k = kindsSplit(r, boundedIds);
+  return { hard: k.hard, soft: k.soft, rate: r.loadRate };
+}
+
+/** a 是否优于 b（字典序：硬种类数 → 装载率 → 软种类数；「全留空」时软种类数并入硬） */
+function isBetterResult(
+  a: { hard: number; soft: number; rate: number },
+  b: { hard: number; soft: number; rate: number },
+  kindsAsHard: boolean,
+): boolean {
+  const aHard = kindsAsHard ? a.hard + a.soft : a.hard;
+  const bHard = kindsAsHard ? b.hard + b.soft : b.hard;
+  if (aHard !== bHard) {
+    return aHard > bHard;
+  }
+  // 用相对比较避免浮点误差导致来回抖动
+  if (Math.abs(a.rate - b.rate) > 1e-9) {
+    return a.rate > b.rate;
+  }
+  return a.soft > b.soft;
+}
+
 /**
- * 主调度 load()：输入货物列表 + 柜型 + 策略参数，输出 PackResult
+ * 单策略主调度：输入货物列表 + 柜型 + **一个具体策略**，输出 PackResult
  *
  * 多货物时按候选配置**多起点**跑贪心，按下列**字典序**择优：
  *   ① 装入的货物种类数多者优（硬约束，见下）
@@ -1090,50 +1114,104 @@ function kindsSplit(r: PackResult, boundedIds: ReadonlySet<string>): { hard: num
  *
  * 前两种是本次改动**必须保证零行为变化**的场景（966 箱 / 95.96% 的基准就在其中）。
  */
-export function load(params: LoadParams): PackResult {
+function loadOneStrategy(params: LoadParams): PackResult {
   const active = params.boxes.filter((b) => b.quantity > 0);
   const first = CARGO_CONFIGS[0];
+
+  /**
+   * 单货物（含无货物）也要多起点 —— 历史行为是直接返回第①条腿
+   *
+   * ## 为什么"只有一种货物，多起点没用"是错的
+   *
+   * sortKey 确实无效（`cargo.sort(sortKey)` 对一种货物是恒等）。但 `placeOnce` 里
+   * `maxBlockVolumeRatio: multiCargo ? blockRatio : 0`（footprint 同理），
+   * 而单货物时 `peers.length === 1` ⇒ `multiCargo = false` ⇒ **两个上限都被强制置 0**。
+   * 于是整条腿只剩 `(preferCleanResidual, residualWeight)` 起作用 —— 这两组偏偏是有用的。
+   *
+   * 实测（策略 3，跑遍候选表 vs 只跑①）：
+   * | 场景 | ① | 多起点 | 差 |
+   * |---|---|---|---|
+   * | 40HQ 1200×800×800 ×120 | 58.66% | **71.01%** | **+12.35 点**（57→69 箱）|
+   * | 40HQ 600×400×400 ×3000 | 75.64% | **81.81%** | **+6.17 点**（588→636 箱）|
+   * | 其余 6 个单货物场景 | — | 持平 | 0.00 |
+   *
+   * 按 `(preferCleanResidual, residualWeight)` **去重**后 18 条腿只对应 5 种组合，
+   * 所以多跑 4 次贪心即可覆盖（每次约 1~5ms）。
+   *
+   * ## 为什么直接比装载率（而不是像多货物那样先比种类数）
+   *
+   * 只有一种货物 ⇒ `kindsSplit` 的 hard 非 0 即 1，退化为"有没有装上"；
+   * 而单货物下**装得越多装载率越高**（同一种箱），两个目标不冲突。
+   * 两条锁死箱数的测试（20ft 装 580×380×320 = 432、200³ = 957）实测逐位不变。
+   */
   if (active.length <= 1) {
-    return runGreedy(params, first.sortKey, first.blockRatio, first.footprintRatio, first.preferCleanResidual, first.residualWeight);
+    let best: PackResult | null = null;
+    const tried = new Set<string>();
+    for (const c of CARGO_CONFIGS) {
+      const key = `${c.preferCleanResidual}|${c.residualWeight}`;
+      if (tried.has(key)) {
+        continue;
+      }
+      tried.add(key);
+      const r = runGreedy(params, c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight);
+      if (best === null || r.loadRate > best.loadRate + 1e-9) {
+        best = r;
+      }
+    }
+    return best!;
   }
   // 用户点名了要装的货物（填了数量）→ 只有它们算"漏掉即废单"
   const boundedIds = new Set(active.filter((b) => b.unlimited !== true).map((b) => b.id));
   // 一个都没点名（全留空）时退回旧口径：此时"种类数"本身就是硬约束
   const kindsAsHard = boundedIds.size === 0;
 
-  const better = (
-    a: { hard: number; soft: number; rate: number },
-    b: { hard: number; soft: number; rate: number },
-  ): boolean => {
-    const aHard = kindsAsHard ? a.hard + a.soft : a.hard;
-    const bHard = kindsAsHard ? b.hard + b.soft : b.hard;
-    if (aHard !== bHard) {
-      return aHard > bHard;
-    }
-    // 用相对比较避免浮点误差导致来回抖动
-    if (Math.abs(a.rate - b.rate) > 1e-9) {
-      return a.rate > b.rate;
-    }
-    return a.soft > b.soft;
-  };
-
-  const scoreOf = (r: PackResult) => {
-    const k = kindsSplit(r, boundedIds);
-    return { hard: k.hard, soft: k.soft, rate: r.loadRate };
-  };
-
   let best = runGreedy(params, first.sortKey, first.blockRatio, first.footprintRatio, first.preferCleanResidual, first.residualWeight);
-  let bestScore = scoreOf(best);
+  let bestScore = scoreOfResult(best, boundedIds);
   for (let i = 1; i < CARGO_CONFIGS.length; i++) {
     const c = CARGO_CONFIGS[i];
     const r = runGreedy(params, c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight);
-    const score = scoreOf(r);
-    if (better(score, bestScore)) {
+    const score = scoreOfResult(r, boundedIds);
+    if (isBetterResult(score, bestScore, kindsAsHard)) {
       best = r;
       bestScore = score;
     }
   }
   return best;
+}
+
+/**
+ * 单柜主调度 load()
+ *
+ * 策略取 `STRATEGY_AUTO`（-1）时，依次跑 0~5 全部策略，按上面那套择优口径取最好的一次。
+ * 返回值里的 `strategy` 是**实际胜出**的那个策略号 —— 报表与实测案例据此显示，
+ * 所以输出里不会留下 -1 这种用户看不懂的值。
+ *
+ * ## 为什么是「可选项」而不是默认
+ *
+ * 实测 22 个多货物场景，自动择优相对固定策略 3 **平均只高 0.37 点**
+ * （夺冠次数 S0..S5 = 5/2/0/13/1/1，策略 2 从未夺冠），代价是**跑 6 遍**。
+ * 更要紧的是策略是用户**有意挑的**：有的场景就是要「承托分级分层」（策略 4）
+ * 来保证物理可摆放，这时装载率更高的策略反而不能用。
+ * 所以默认仍是用户所选策略，自动择优必须显式打开。
+ */
+export function load(params: LoadParams): PackResult {
+  if ((params.strategy ?? 3) !== STRATEGY_AUTO) {
+    return loadOneStrategy(params);
+  }
+  const active = params.boxes.filter((b) => b.quantity > 0);
+  const boundedIds = new Set(active.filter((b) => b.unlimited !== true).map((b) => b.id));
+  const kindsAsHard = boundedIds.size === 0;
+  let best: PackResult | null = null;
+  let bestScore: { hard: number; soft: number; rate: number } | null = null;
+  for (const s of ALL_STRATEGIES) {
+    const r = loadOneStrategy({ ...params, strategy: s });
+    const score = scoreOfResult(r, boundedIds);
+    if (best === null || isBetterResult(score, bestScore!, kindsAsHard)) {
+      best = r;
+      bestScore = score;
+    }
+  }
+  return best!;
 }
 
 /** 按货物 ID 统计箱数 */
@@ -1164,13 +1242,21 @@ export interface MultiLoadParams {
 }
 
 /**
- * 多柜自动装载调度：同柜型循环装载
- * 每次以「剩余货物列表 + 柜型」调用 load() 装一柜，更新剩余数量，
- * 直到全部装完或连续 maxEmptyRounds 柜一件都装不进为止。
- * plans 仅收录至少装入一件的有效柜；remaining 为最终未装完的剩余数量。
+ * 顺序装满（历史行为，作为保底）：装满一柜 → 扣减剩余 → 再开一柜
+ *
+ * 缺陷：末柜常常几乎是空的（实测"三货物大规模"12 柜、末柜 5.1%），
+ * 因为它是"把前面每一柜都装到极限"的副作用。planMultiContainer 拿它做保底，
+ * 再尝试用「均衡分柜」换更少的柜数。
+ *
+ * 导出仅供**测试与诊断**比对"柜数只减不增"这条性质（同 runGreedy 的导出理由）。
  */
-export function planMultiContainer(params: MultiLoadParams): MultiPlanResult {
-  const { boxes, container, strategy = 3, options, maxEmptyRounds = 3 } = params;
+export function greedyMultiContainer(
+  boxes: Box[],
+  container: Container,
+  strategy: number,
+  options: LoadOptions | undefined,
+  maxEmptyRounds: number,
+): MultiPlanResult {
   const remaining: Array<{ box: Box; qty: number }> = boxes
     .filter((b) => b.quantity > 0)
     .map((b) => ({ box: b, qty: b.quantity }));
@@ -1218,4 +1304,164 @@ export function planMultiContainer(params: MultiLoadParams): MultiPlanResult {
     overallRate,
     remaining: remaining.map((r) => ({ boxId: r.box.id, qty: r.qty })),
   };
+}
+
+/** 「货物 × 数量」的一张分配单 */
+interface BoxQty {
+  box: Box;
+  qty: number;
+}
+
+/**
+ * 把货物按**体积 LPT** 均分到 n 个柜：每件分给当前累计体积最小的柜
+ *
+ * 大件先分（单件体积降序）⇒ 均衡效果更好，这就是 LPT（longest processing time）
+ * 的经典写法。同一货物内部件件相同，故等价于在"当前最空的柜"之间轮转。
+ * 这是**只看体积、不看几何**的粗分配 —— 能否真装下由后面的可行性判定说了算。
+ */
+function balanceByVolume(boxes: Box[], n: number): BoxQty[][] {
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const acc = new Array<number>(n).fill(0);
+  const buckets: Array<Map<string, number>> = Array.from({ length: n }, () => new Map());
+  const units: Box[] = [];
+  for (const b of boxes) {
+    for (let i = 0; i < b.quantity; i++) {
+      units.push(b);
+    }
+  }
+  units.sort((x, y) => boxVolume(y) - boxVolume(x));
+  for (const b of units) {
+    let k = 0;
+    for (let i = 1; i < n; i++) {
+      if (acc[i] < acc[k]) {
+        k = i;
+      }
+    }
+    acc[k] += boxVolume(b);
+    const m = buckets[k];
+    m.set(b.id, (m.get(b.id) ?? 0) + 1);
+  }
+  return buckets.map((m) => [...m.entries()].map(([id, qty]) => ({ box: byId.get(id)!, qty })));
+}
+
+/**
+ * 装一柜，取**装得最多**的那条腿
+ *
+ * 与 `load()` 口径不同：`load()` 按 (种类数 → 装载率) 择优，因为"漏掉一个品项"是废单。
+ * 但多柜可行性判定要的是**装下的件数最多** —— 否则某条腿少装两件就会被误判成"柜数不够"。
+ */
+function fillContainerMax(
+  boxes: Box[],
+  container: Container,
+  strategy: number,
+  options: LoadOptions | undefined,
+): PackResult {
+  let best: PackResult | null = null;
+  let bestCount = -1;
+  let bestKinds = -1;
+  // 自动策略：和 load() 一样跑遍 0~5（这里按「装得最多」择优，见上面的口径说明）
+  const strategies: readonly number[] = strategy === STRATEGY_AUTO ? ALL_STRATEGIES : [strategy];
+  for (const s of strategies) {
+    const params = { boxes, container, strategy: s, options };
+    for (const c of CARGO_CONFIGS) {
+      const r = runGreedy(params, c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight);
+      const count = r.placements.reduce((sum, p) => sum + p.count, 0);
+      const kinds = new Set(r.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+      if (count > bestCount || (count === bestCount && kinds > bestKinds)
+        || (count === bestCount && kinds === bestKinds && best !== null && r.loadRate > best.loadRate + 1e-9)) {
+        best = r;
+        bestCount = count;
+        bestKinds = kinds;
+      }
+    }
+  }
+  return best!;
+}
+
+/**
+ * 试「均衡分柜到 n 个柜」是否装得完：全部装完返回各柜结果，任一柜装不完返回 null
+ *
+ * 这是**可行性判定**，不是优化 —— 装不完就说明 n 个柜不够，往上加柜。
+ */
+function tryBalancedContainers(
+  boxes: Box[],
+  container: Container,
+  strategy: number,
+  options: LoadOptions | undefined,
+  n: number,
+): PackResult[] | null {
+  const plans: PackResult[] = [];
+  for (const bucket of balanceByVolume(boxes, n)) {
+    if (bucket.length === 0) {
+      continue;
+    }
+    const want = bucket.reduce((s, x) => s + x.qty, 0);
+    const r = fillContainerMax(bucket.map((x) => ({ ...x.box, quantity: x.qty })), container, strategy, options);
+    const got = r.placements.reduce((s, p) => s + p.count, 0);
+    if (got < want) {
+      return null;
+    }
+    plans.push(r);
+  }
+  return plans.length > 0 ? plans : null;
+}
+
+/** 由各柜结果汇总出 MultiPlanResult（均衡分柜成功时全部货都已装完，故 remaining 为空） */
+function summarizePlans(plans: PackResult[], singleVolume: number): MultiPlanResult {
+  const totalLoadedVolume = plans.reduce((s, p) => s + p.usedVolume, 0);
+  const totalContainerVolume = plans.length * singleVolume;
+  return {
+    plans,
+    totalContainers: plans.length,
+    totalLoadedVolume,
+    totalContainerVolume,
+    overallRate: totalContainerVolume > 0 ? totalLoadedVolume / totalContainerVolume : 0,
+    remaining: [],
+  };
+}
+
+/**
+ * 多柜自动装载调度：同柜型循环装载
+ *
+ * ## 两种排法，取柜数少者
+ *
+ * ① **顺序装满**（历史行为）：装满一柜 → 扣减剩余 → 再开一柜。
+ *    末柜常常几乎是空的 —— 实测"三货物大规模"12 柜、**末柜只有 5.1%**。
+ * ② **均衡分柜**：先把每种货按体积 LPT 均分到 N 个柜，再逐柜装。
+ *    只要 N 个柜都能把分配到的货装完，就说明 **N 柜够用**。
+ *    从**体积下限** `ceil(需求体积 / 柜容)` 起向上试，取最小的可行 N。
+ *
+ * ## 为什么是「追加」而不是「替换」
+ *
+ * 只有 ② 成功**且柜数更少**时才采用它，否则原样返回 ①。
+ * 所以柜数只可能持平或减少，"货必须装完"这条也不会被破坏
+ * （② 的可行性判定就是"每柜分配到的货全部装上"）。
+ *
+ * ## 实测（10 个批量场景，策略 3）
+ *
+ * | 场景 | 体积下限 | 顺序装满 | 均衡分柜 | 末柜装载率(顺序) |
+ * |---|---|---|---|---|
+ * | 两货物中等规模 | 5 | 6 | **5** | 12.4% |
+ * | 其余 9 个 | — | = 下限 或 下限+1/+2 | 省不下 | 2.3% ~ 70.5% |
+ *
+ * 注意"单向货 600×400×400 ×5000"原来 9 柜、现在 8 柜 —— 那一柜是
+ * **①（单货物多起点）** 带来的，不是 ③；③ 只在"两货物中等规模"上另外省了 1 柜。
+ * 也就是说 ① 已经吃掉了 ③ 的大部分收益，③ 的增量很小但方向正确（只赚不赔）。
+ */
+export function planMultiContainer(params: MultiLoadParams): MultiPlanResult {
+  const { boxes, container, strategy = 3, options, maxEmptyRounds = 3 } = params;
+  const greedy = greedyMultiContainer(boxes, container, strategy, options, maxEmptyRounds);
+
+  // 体积下限：即使每柜装到 100% 也至少需要这么多柜，低于它不必试
+  const singleVolume = containerVolume(container);
+  const demandVolume = boxes.reduce((s, b) => s + (b.quantity > 0 ? boxVolume(b) * b.quantity : 0), 0);
+  const lowerBound = Math.max(1, Math.ceil(demandVolume / singleVolume - 1e-9));
+
+  for (let n = lowerBound; n < greedy.totalContainers; n++) {
+    const plans = tryBalancedContainers(boxes, container, strategy, options, n);
+    if (plans) {
+      return summarizePlans(plans, singleVolume);
+    }
+  }
+  return greedy;
 }
