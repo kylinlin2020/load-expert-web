@@ -15,9 +15,25 @@ export const SPACE_SLOT_BYTES = 0x20;
 export const SPACE_CAPACITY_MIN = 4;
 export const SPACE_CAPACITY_MAX = 0x400;
 
+/**
+ * 剩余空间切分时「哪条带子拿全宽」
+ *
+ * - `'x'`：x 方向尾端条带整宽（现行 / 历史行为）
+ * - `'y'`：y 方向尾端条带整宽（镜像）
+ *
+ * 放块的 x/y 尺寸不成比例时，两种切法留下的残余形状完全不同：
+ * 一条是「沿柜长延伸到尽头的整宽板条」，另一条是「沿柜宽方向的板条」，
+ * 后续能塞进什么块随之不同。哪一种更好取决于货物尺寸与柜内剩余几何，
+ * **不存在恒优的一方**（实测单独替换：升 54 / 降 31 / 平 83 个组合），
+ * 所以由调度层两种都跑、取装载率更高的那次（见 load.ts 的 loadOneStrategy）。
+ */
+export type SpaceTailAxis = 'x' | 'y';
+
 export class SpaceManager {
   private list: SpaceBlock[] = [];
   private capacity: number;
+  /** 切分方向策略（见 SpaceTailAxis）；默认 `'x'` = 历史行为 */
+  tailAxis: SpaceTailAxis = 'x';
 
   constructor(initialCapacity = SPACE_CAPACITY_MIN) {
     this.capacity = Math.max(SPACE_CAPACITY_MIN, initialCapacity);
@@ -100,6 +116,7 @@ export class SpaceManager {
    *   让调度层能识别"这个空间压在谁的头上"，从而避免跨货物交错堆叠
    *   （见 load.ts 的 pickSpaceFor）。侧边/尾端条带底部落在柜底，不带标记。
    * TODO/UNCERTAIN：原程序 0x4c6f9d 的切分方向顺序与是否保整高未完全还原。
+   * 方向顺序无法确认，因此不猜：两种方向都实现（`tailAxis`），由调度层择优。
    */
   split(
     space: SpaceBlock,
@@ -134,6 +151,19 @@ export class SpaceManager {
     const topDz = sz + space.dz - (bz + cdz);
     if (topDz > 0) {
       result.push({ x: bx, y: by, z: bz + cdz, dx: cdx, dy: cdy, dz: topDz, baseBoxId });
+    }
+    if (this.tailAxis === 'y') {
+      // 2') y 方向尾端条带：整高，x 铺满 space 长度
+      const tailDy = sy + space.dy - (by + cdy);
+      if (tailDy > 0) {
+        result.push({ x: sx, y: by + cdy, z: sz, dx: space.dx, dy: tailDy, dz: space.dz });
+      }
+      // 3') x 方向侧边条带：整高，y 仅到块前边界（与 2' 相接不重叠）
+      const sideDx = sx + space.dx - (bx + cdx);
+      if (sideDx > 0) {
+        result.push({ x: bx + cdx, y: sy, z: sz, dx: sideDx, dy: cdy, dz: space.dz });
+      }
+      return result;
     }
     // 2) x 方向尾端条带：整高，y 铺满 space 宽度
     const tailDx = sx + space.dx - (bx + cdx);

@@ -1750,3 +1750,139 @@ test('自动策略：多柜模式也支持，并且每个柜的 strategy 都是�
     assert.ok(Number.isInteger(p.strategy) && p.strategy >= 0 && p.strategy <= 5, `每柜的 strategy 都应是 0~5 的具体值，实际 ${p.strategy}`);
   }
 });
+
+/* ──────────────── 剩余空间切分方向（多起点的又一个维度）─────────────── */
+
+/** 与实测脚本同一套货物属性（撑满 2 个方向、同族可堆） */
+function hardBox(id: string, l: number, w: number, h: number, kg: number, qty: number): Box {
+  return makeBox({
+    id, length: l, width: w, height: h, weight: kg, quantity: qty,
+    stackClass: 8,
+    supportClasses: [8, 8, 4, 4, 4, 4],
+    allowDirections: [true, true, false, false, false, false],
+    supportFaces: [true, true, false, false, false, false],
+  });
+}
+
+test('空间切分：x / y 两个方向都精确（守恒、不重叠、条带整高），但形状不同', () => {
+  // 同一个空间、同一个块，只换切分方向：
+  // 两种切法都必须**精确**（剩余体积 + 块体积 = 原空间体积），
+  // 否则"多跑一遍取更优"就变成"多跑一遍拿重叠空间换装载率"。
+  const space = { x: 0, y: 0, z: 0, dx: 1000, dy: 500, dz: 300 };
+  const dims: [number, number, number] = [800, 400, 200];
+  const vol = (s: { dx: number; dy: number; dz: number }) => s.dx * s.dy * s.dz;
+  const overlap = (
+    a: { x: number; y: number; z: number; dx: number; dy: number; dz: number },
+    b: { x: number; y: number; z: number; dx: number; dy: number; dz: number },
+  ) => {
+    const ox = Math.min(a.x + a.dx, b.x + b.dx) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.dy, b.y + b.dy) - Math.max(a.y, b.y);
+    const oz = Math.min(a.z + a.dz, b.z + b.dz) - Math.max(a.z, b.z);
+    return ox > 1e-9 && oy > 1e-9 && oz > 1e-9;
+  };
+
+  const shapes: Record<string, Array<{ x: number; y: number; z: number; dx: number; dy: number; dz: number }>> = {};
+  for (const axis of ['x', 'y'] as const) {
+    const sm = new SpaceManager();
+    assert.equal(sm.tailAxis, 'x', '默认必须是历史行为（x 尾端整宽）');
+    sm.tailAxis = axis;
+    const rest = sm.split(space, { x: 0, y: 0, z: 0, dims });
+    shapes[axis] = rest;
+
+    assert.equal(rest.length, 3, `${axis}：应切出 3 个剩余空间`);
+    for (const r of rest) {
+      assert.ok(r.dx > 0 && r.dy > 0 && r.dz > 0, `${axis}：剩余空间尺寸须为正`);
+      assert.ok(r.x >= space.x - 1e-9 && r.x + r.dx <= space.x + space.dx + 1e-9, `${axis}：x 不得越出`);
+      assert.ok(r.y >= space.y - 1e-9 && r.y + r.dy <= space.y + space.dy + 1e-9, `${axis}：y 不得越出`);
+      assert.ok(r.z >= space.z - 1e-9 && r.z + r.dz <= space.z + space.dz + 1e-9, `${axis}：z 不得越出`);
+    }
+    for (let i = 0; i < rest.length; i++) {
+      for (let j = i + 1; j < rest.length; j++) {
+        assert.equal(overlap(rest[i], rest[j]), false, `${axis}：剩余空间 ${i} 与 ${j} 重叠`);
+      }
+    }
+    const restVol = rest.reduce((s, r) => s + vol(r), 0);
+    const blockVol = vol({ dx: dims[0], dy: dims[1], dz: dims[2] });
+    assert.ok(Math.abs(restVol + blockVol - vol(space)) < 1e-6, `${axis}：体积须守恒`);
+
+    // 顶部空间永远只覆盖块自身足迹（承托语义，两个方向一致）
+    const top = rest.find((r) => r.z === dims[2]);
+    assert.ok(top, `${axis}：应有块正上方的顶部空间`);
+    assert.equal(top!.dx, dims[0], `${axis}：顶部空间 x 应等于块足迹`);
+    assert.equal(top!.dy, dims[1], `${axis}：顶部空间 y 应等于块足迹`);
+    // 贴地条带必须整高
+    for (const s of rest.filter((r) => r.z === space.z)) {
+      assert.equal(s.dz, space.dz, `${axis}：贴地条带须整高`);
+    }
+  }
+
+  // 这个维度必须**真的**产生不同形状，否则多跑一遍毫无意义
+  assert.notDeepEqual(shapes.x, shapes.y, 'x / y 两种切法给出的剩余空间形状必须不同');
+});
+
+test('切分方向：load() 不劣于任何单方向腿（追加维度只加不减）', () => {
+  // 与「候选表追加腿」「自动择优」同一条性质：切分方向是**追加**的维度，
+  // 按 (种类数 → 装载率) 取最大 ⇒ 相对任何单方向单腿都只可能持平或更好。
+  const boxes = autoCargo();
+  const container = c45;
+  const kinds = (r: { placements: Array<{ boxId: string; count: number }> }) =>
+    new Set(r.placements.filter((p) => p.count > 0).map((p) => p.boxId)).size;
+  const notWorse = (
+    a: { placements: Array<{ boxId: string; count: number }>; loadRate: number },
+    b: { placements: Array<{ boxId: string; count: number }>; loadRate: number },
+  ) => kinds(a) > kinds(b) || (kinds(a) === kinds(b) && a.loadRate >= b.loadRate - 1e-9);
+
+  for (const s of [0, 3, 5]) {
+    const got = load({ boxes, container, strategy: s });
+    for (const axis of ['x', 'y'] as const) {
+      for (const c of CARGO_CONFIGS) {
+        const one = runGreedy({ boxes, container, strategy: s }, c.sortKey, c.blockRatio, c.footprintRatio, c.preferCleanResidual, c.residualWeight, axis);
+        assert.ok(
+          notWorse(got, one),
+          `策略 ${s} + 切分 ${axis} 的某条腿（种类 ${kinds(one)} / ${(one.loadRate * 100).toFixed(2)}%）`
+            + ` 优于 load() 结果（种类 ${kinds(got)} / ${(got.loadRate * 100).toFixed(2)}%）`,
+        );
+      }
+    }
+  }
+});
+
+test('切分方向：实测收益锁死（策略 3，4 个场景）', () => {
+  // 数字来自仓库外 A/B 脚本（168 个「场景×策略」组合：升 54 / 降 0 / 平 114，
+  // 平均 +0.42 点、最大 +3.04）。这里锁策略 3 的四个代表场景，取下限口径。
+  const cases: Array<{ name: string; container: Container; boxes: Box[]; min: number }> = [
+    {
+      name: '45HQ 三货物', container: c45,
+      boxes: [hardBox('A', 600, 400, 400, 25, 500), hardBox('B', 500, 400, 300, 18, 600), hardBox('C', 400, 300, 300, 12, 700)],
+      min: 0.8601, // 改前 84.79%
+    },
+    {
+      name: '40HQ 两货物尺寸接近', container: c40ForAuto,
+      boxes: [hardBox('A', 500, 400, 300, 18, 900), hardBox('B', 500, 400, 320, 19, 700)],
+      min: 0.8929, // 改前 87.37%
+    },
+    {
+      name: '20ft 三货物', container: makeContainer(),
+      boxes: [hardBox('A', 500, 400, 300, 18, 800), hardBox('B', 400, 300, 300, 12, 1000), hardBox('C', 350, 300, 250, 8, 1500)],
+      min: 0.9026, // 改前 88.58%
+    },
+    {
+      name: '45HQ 长条件', container: c45,
+      boxes: [hardBox('L1', 1800, 400, 400, 40, 700), hardBox('L2', 1500, 350, 350, 35, 800)],
+      min: 0.8778, // 改前 86.29%
+    },
+  ];
+  for (const c of cases) {
+    const r = load({ boxes: c.boxes, container: c.container, strategy: 3 });
+    assert.ok(
+      r.loadRate >= c.min - 1e-9,
+      `${c.name}：策略 3 应不低于 ${(c.min * 100).toFixed(2)}%（切分方向维度的实测收益），实际 ${(r.loadRate * 100).toFixed(2)}%`,
+    );
+    // 取更优的那个方向，几何必须仍然合法（不能靠重叠放置换装载率）
+    for (const p of r.placements) {
+      assert.ok(p.x >= -1e-9 && p.x + p.dims[0] <= c.container.innerLength + 1e-6, `${c.name}：x 越界`);
+      assert.ok(p.y >= -1e-9 && p.y + p.dims[1] <= c.container.innerWidth + 1e-6, `${c.name}：y 越界`);
+      assert.ok(p.z >= -1e-9 && p.z + p.dims[2] <= c.container.innerHeight + 1e-6, `${c.name}：z 越界`);
+    }
+  }
+});
