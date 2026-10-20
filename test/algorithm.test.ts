@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Box, Container } from '../src/types/index.js';
 import { load, runGreedy, CARGO_CONFIGS, planMultiContainer, greedyMultiContainer, countByBox } from '../src/algorithm/load.js';
+import { normalizeStrategy } from '../src/algorithm/candidate-blocks.js';
 import { orientDims, ORIENTATION_AXIS_ORDERS } from '../src/algorithm/orientations.js';
 import { generateStrategy0, generateStrategy1, generateStrategy2, generateStrategy3, generateStrategy4, generateStrategy5, containerVolume, MULTI_CARGO_FOOTPRINT_RATIO, STRATEGY_AUTO, STRATEGY_NAMES } from '../src/algorithm/candidate-blocks.js';
 import { scoreBlock } from '../src/algorithm/block-scoring.js';
@@ -1885,4 +1886,21 @@ test('切分方向：实测收益锁死（策略 3，4 个场景）', () => {
       assert.ok(p.z >= -1e-9 && p.z + p.dims[2] <= c.container.innerHeight + 1e-6, `${c.name}：z 越界`);
     }
   }
+});
+
+/* ──────────────── 策略号入参归一（normalizeStrategy）──────────────── */
+
+test('normalizeStrategy：只放行 -1 与 0~5，其它回落默认 3', () => {
+  assert.equal(normalizeStrategy(-1), -1, '自动哨兵要放行');
+  for (const n of [0, 1, 2, 3, 4, 5]) {
+    assert.equal(normalizeStrategy(n), n, '白名单内的要原样放行');
+  }
+  // 非白名单 / 非 number 类型一律回落默认
+  assert.equal(normalizeStrategy(6), 3, '6 越界');
+  assert.equal(normalizeStrategy(-2), 3, '-2 越界');
+  assert.equal(normalizeStrategy(1.5), 3, '非整数');
+  assert.equal(normalizeStrategy('3'), 3, '字符串数字不放行');
+  assert.equal(normalizeStrategy(undefined), 3, '缺省');
+  assert.equal(normalizeStrategy(null), 3, 'null');
+  assert.equal(normalizeStrategy('x', 5), 5, 'fallback 可自定义');
 });

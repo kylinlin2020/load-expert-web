@@ -5,9 +5,10 @@
  * 扩容策略：newCapacity = count/8 + 4，下限 4，上限 0x400（1024）。
  * 空间块 0x20 字节/块（位置 + 尺寸）。
  *
- * 剩余空间三分割细节（方向顺序）未能完全还原，本实现采用
- * 常见 FillSpace 三分：先切 z 向顶部空间，再切 y 向侧边空间，最后切 x 向尾端空间；
- * 顺序标记 TODO/UNCERTAIN。
+ * 剩余空间三分割：切块正上方（仅块足迹，保证承托）+ 两条贴地整高条带。
+ * 原程序条带方向（沿 x 还是沿 y 拿全宽）未能完全还原，标记 TODO/UNCERTAIN ——
+ * 现实现为显式的 `tailAxis` 两种切法，由调度层两种都跑、取装载率更高的（见 SpaceTailAxis），
+ * 而不是把猜测固化成单一行为。
  */
 import type { CandidateBlock, Placement, SpaceBlock } from '../types/index.js';
 

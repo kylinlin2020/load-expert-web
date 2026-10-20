@@ -18,6 +18,7 @@
  */
 import type { Box, Container, LoadOptions, MultiPlanResult, PackResult } from '../../types/index.js';
 import { load, planMultiContainer } from '../../algorithm/load.js';
+import { normalizeStrategy } from '../../algorithm/candidate-blocks.js';
 import { exportBackup, importBackup } from '../../model/backupApply.js';
 import { appVersion } from '../../version.js';
 import { createIdbStore } from './idbAdapter.js';
@@ -160,7 +161,7 @@ export function createLocalApi(db?: RowStore): ApiShape {
       }
       const container = await getContainerOrThrow(payload.containerId);
       const boxes = await resolveItems(payload.items);
-      const strategy = Number.isInteger(payload.strategy) ? (payload.strategy as number) : 3;
+      const strategy = normalizeStrategy(payload.strategy);
       return load({ boxes, container, strategy, options: optionsOf(payload) });
     },
 
@@ -173,7 +174,7 @@ export function createLocalApi(db?: RowStore): ApiShape {
       }
       const container = await getContainerOrThrow(payload.containerId);
       const boxes = await resolveItems(payload.items);
-      const strategy = Number.isInteger(payload.strategy) ? (payload.strategy as number) : 3;
+      const strategy = normalizeStrategy(payload.strategy);
       return planMultiContainer({
         boxes,
         container,

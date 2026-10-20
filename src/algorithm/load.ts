@@ -14,7 +14,7 @@
  */
 import type { Box, CandidateBlock, Container, LoadOptions, MultiPlanResult, PackResult, Placement, SpaceBlock } from '../types/index.js';
 import { validOrientations } from './direction-validity.js';
-import { orientDims, ORIENTATION_AXIS_ORDERS, ORIENTATION_COUNT } from './orientations.js';
+import { orientDims, ORIENTATION_AXIS_ORDERS } from './orientations.js';
 import { scoreBlock } from './block-scoring.js';
 import { SpaceManager, type SpaceTailAxis } from './space-manager.js';
 import { checkConstraints } from './constraints.js';
@@ -895,7 +895,15 @@ const QTY_DESC: CargoSortKey = (x, y) => y.box.quantity - x.box.quantity || boxV
  * 老的无上限腿在 20ft 场景上不可替代。老腿即使在某个场景不是最优，
  * 也可能在别的场景是唯一解。
  */
-export const CARGO_CONFIGS: ReadonlyArray<{ sortKey: CargoSortKey; blockRatio: number; footprintRatio: number; preferCleanResidual: boolean; residualWeight: number }> = [
+export interface CargoConfig {
+  sortKey: CargoSortKey;
+  blockRatio: number;
+  footprintRatio: number;
+  preferCleanResidual: boolean;
+  residualWeight: number;
+}
+
+export const CARGO_CONFIGS: ReadonlyArray<CargoConfig> = [
   // ── ①~④：残余整洁维度引入前的历史四腿，全部保留（一改动就会掉 5~8 个点）──
   // ① 单箱体积降序 + 原有双上限（历史行为，保证不退化）
   { sortKey: VOL_DESC, blockRatio: 0.5, footprintRatio: MULTI_CARGO_FOOTPRINT_RATIO, preferCleanResidual: false, residualWeight: 0 },
@@ -1117,6 +1125,22 @@ function isBetterResult(
 }
 
 /**
+ * 单柜择优的**口径**：谁算"漏掉即废单"（硬约束货物名单）
+ *
+ * - 用户点名了要装的货物（填了数量）→ 只有它们算"漏掉即废单"
+ * - 一个都没点名（全留空）→ 退回旧口径：此时"种类数"本身就是硬约束
+ *
+ * `load()` 与 `loadOneStrategy()` 都要用它 —— 抽成一处，
+ * 避免两份拷贝日后被改得不一致（接口层只透传，不理解这条规则）。
+ */
+function selectionScope(params: LoadParams): { boundedIds: Set<string>; kindsAsHard: boolean } {
+  // 用户点名了要装的货物（填了数量）→ 只有它们算"漏掉即废单"
+  const boundedIds = new Set(params.boxes.filter((b) => b.quantity > 0 && b.unlimited !== true).map((b) => b.id));
+  // 一个都没点名（全留空）时退回旧口径：此时"种类数"本身就是硬约束
+  return { boundedIds, kindsAsHard: boundedIds.size === 0 };
+}
+
+/**
  * 单策略主调度：输入货物列表 + 柜型 + **一个具体策略**，输出 PackResult
  *
  * 多货物时按候选配置**多起点**跑贪心，按下列**字典序**择优：
@@ -1145,8 +1169,9 @@ function isBetterResult(
  *
  * 前两种是本次改动**必须保证零行为变化**的场景（966 箱 / 95.96% 的基准就在其中）。
  */
-function loadOneStrategy(params: LoadParams): PackResult {
+function loadOneStrategy(params: LoadParams, scope = selectionScope(params)): PackResult {
   const active = params.boxes.filter((b) => b.quantity > 0);
+  const { boundedIds, kindsAsHard } = scope;
 
   /**
    * 单货物（含无货物）也要多起点 —— 历史行为是直接返回第①条腿
@@ -1192,11 +1217,7 @@ function loadOneStrategy(params: LoadParams): PackResult {
     }
     return best!;
   }
-  // 用户点名了要装的货物（填了数量）→ 只有它们算"漏掉即废单"
-  const boundedIds = new Set(active.filter((b) => b.unlimited !== true).map((b) => b.id));
-  // 一个都没点名（全留空）时退回旧口径：此时"种类数"本身就是硬约束
-  const kindsAsHard = boundedIds.size === 0;
-
+  // 择优口径（谁算"漏掉即废单"）见 selectionScope 的说明；由调用方预计算并透传
   let best: PackResult | null = null;
   let bestScore: { hard: number; soft: number; rate: number } | null = null;
   // 先跑 x（历史切法）再跑 y：打平时保留历史结果，避免无收益的放置变化
@@ -1232,13 +1253,11 @@ export function load(params: LoadParams): PackResult {
   if ((params.strategy ?? 3) !== STRATEGY_AUTO) {
     return loadOneStrategy(params);
   }
-  const active = params.boxes.filter((b) => b.quantity > 0);
-  const boundedIds = new Set(active.filter((b) => b.unlimited !== true).map((b) => b.id));
-  const kindsAsHard = boundedIds.size === 0;
+  const { boundedIds, kindsAsHard } = selectionScope(params);
   let best: PackResult | null = null;
   let bestScore: { hard: number; soft: number; rate: number } | null = null;
   for (const s of ALL_STRATEGIES) {
-    const r = loadOneStrategy({ ...params, strategy: s });
+    const r = loadOneStrategy({ ...params, strategy: s }, { boundedIds, kindsAsHard });
     const score = scoreOfResult(r, boundedIds);
     if (best === null || isBetterResult(score, bestScore!, kindsAsHard)) {
       best = r;
@@ -1256,9 +1275,6 @@ export function countByBox(result: PackResult): Map<string, number> {
   }
   return map;
 }
-
-/** 方向枚举数量（透传常量） */
-export const DIRECTION_COUNT = ORIENTATION_COUNT;
 
 /* ───────────────────────── 多柜自动装载 ───────────────────────── */
 

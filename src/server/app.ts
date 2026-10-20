@@ -22,7 +22,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import type { DatabaseSync } from 'node:sqlite';
-import { load, planMultiContainer } from '../algorithm/index.js';
+import { load, planMultiContainer, normalizeStrategy } from '../algorithm/index.js';
 import {
   openDatabase,
   listBoxes,
@@ -313,7 +313,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       }
       boxes.push({ ...box, quantity: qty, unlimited: item.unlimited === true });
     }
-    const strategy = Number.isInteger(body.strategy) ? (body.strategy as number) : 3;
+    const strategy = normalizeStrategy(body.strategy);
     const result = load({
       boxes,
       container: container as Container,
@@ -345,7 +345,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       }
       boxes.push({ ...box, quantity: qty, unlimited: item.unlimited === true });
     }
-    const strategy = Number.isInteger(body.strategy) ? (body.strategy as number) : 3;
+    const strategy = normalizeStrategy(body.strategy);
     const result = planMultiContainer({
       boxes,
       container: container as Container,
@@ -439,7 +439,7 @@ export function buildApp(deps: AppDeps = {}): FastifyInstance {
       name: b.name.trim(),
       container: b.container as NewCase['container'],
       boxes: b.boxes as Box[],
-      strategy: Number.isInteger(b.strategy) ? (b.strategy as number) : 3,
+      strategy: normalizeStrategy(b.strategy),
       options: b.options as LoadOptions | undefined,
       computed: b.computed as NewCase['computed'],
       actual: (b.actual as NewCase['actual']) ?? {},

@@ -377,6 +377,31 @@ test('POST /api/plans/calculate 返回合理结果', async () => {
   assert.equal(typeof result.strategy, 'number');
 });
 
+test('POST /api/plans/calculate 非法策略号回落默认 3（不把脏值带进结果）', async () => {
+  // 算法侧对 unknown 策略按 3 跑，但若不在入口归一，PackResult.strategy
+  // 会原样记成非法值，报表/实测案例显示"策略 99"这种没人看得懂的编号。
+  const b1 = (await inject('POST', '/api/boxes', { name: '回落数字箱', length: 500, width: 400, height: 300, weight: 15 })).json();
+  const containers = (await inject('GET', '/api/containers')).json().items;
+  const container = containers.find((c: { label: string }) => c.label === '20GP');
+  const res = await inject('POST', '/api/plans/calculate', {
+    containerId: container.id,
+    items: [{ boxId: b1.id, qty: 80 }],
+    strategy: 99,
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().strategy, 3, `strategy=99 必须回落为 3，实际 ${res.json().strategy}`);
+
+  // 白名单内的值要原样放行（-1 = 自动）
+  const resAuto = await inject('POST', '/api/plans/calculate', {
+    containerId: container.id,
+    items: [{ boxId: b1.id, qty: 80 }],
+    strategy: -1,
+  });
+  assert.equal(resAuto.statusCode, 200);
+  const autoStrategy = resAuto.json().strategy;
+  assert.ok(Number.isInteger(autoStrategy) && autoStrategy >= 0 && autoStrategy <= 5, `自动应胜出具体策略，实际 ${autoStrategy}`);
+});
+
 test('POST /api/plans/calculate 柜型不存在返回 404', async () => {
   const res = await inject('POST', '/api/plans/calculate', {
     containerId: 999999,

@@ -663,6 +663,25 @@ export const ALL_STRATEGIES = [0, 1, 2, 3, 4, 5] as const;
 export const STRATEGY_AUTO = -1;
 
 /**
+ * 策略号**入参**归一：只接受 -1（自动）与 0~5，其它一律回落默认 3
+ *
+ * 为什么要在入口归一（而不是放进 `generateCandidateBlock` 的 default 分支了事）：
+ * 算法对 unknown 策略确实按策略 3 跑（见上方的 switch），但 `PackResult.strategy`
+ * 会**原样记下非法值** —— 服务端收到 strategy: 99 这类脏 JSON 时不拦，
+ * 报表、实测案例、3D 示意就会显示"策略 99"这种没人看得懂的编号。
+ * 服务端与静态版本地客户端都通过这里再进算法。
+ */
+export function normalizeStrategy(value: unknown, fallback = 3): number {
+  if (Number.isInteger(value)) {
+    const n = value as number;
+    if (n === STRATEGY_AUTO || (n >= 0 && n <= 5)) {
+      return n;
+    }
+  }
+  return fallback;
+}
+
+/**
  * 策略名称（输出用 + 前端显示）
  */
 export const STRATEGY_NAMES: Record<number, string> = {
